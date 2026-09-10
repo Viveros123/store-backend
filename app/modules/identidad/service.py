@@ -170,6 +170,18 @@ def _validar_rol(session: Session, rol_id: int) -> None:
         )
 
 
+def _validar_sucursal(session: Session, sucursal_id: int | None) -> None:
+    if sucursal_id is None:
+        return
+    from app.modules.sucursales.models import Sucursal
+
+    if session.get(Sucursal, sucursal_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"La sucursal {sucursal_id} no existe",
+        )
+
+
 def create_usuario(session: Session, data: UsuarioCreate) -> Usuario:
     if get_usuario_by_email(session, data.email):
         raise HTTPException(
@@ -177,6 +189,7 @@ def create_usuario(session: Session, data: UsuarioCreate) -> Usuario:
             detail="Ya existe un usuario con ese email",
         )
     _validar_rol(session, data.rol_id)
+    _validar_sucursal(session, data.sucursal_id)
 
     usuario = Usuario(
         nombre=data.nombre,
@@ -224,6 +237,8 @@ def update_usuario(
     if "rol_id" in cambios and cambios["rol_id"] is not None:
         _validar_rol(session, cambios["rol_id"])
         usuario.rol_id = cambios["rol_id"]
+    if "sucursal_id" in cambios:
+        _validar_sucursal(session, cambios["sucursal_id"])
     if "password" in cambios and cambios["password"]:
         usuario.password_hash = hash_password(cambios["password"])
 

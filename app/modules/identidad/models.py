@@ -39,9 +39,8 @@ class Usuario(SQLModel, table=True):
     telefono: str | None = Field(default=None, max_length=20)
 
     rol_id: int = Field(foreign_key="rol.id")
-    # FK reales que se agregan cuando existan esas tablas:
-    sucursal_id: int | None = Field(default=None)   # -> CU11 Gestionar Sucursales
-    proveedor_id: int | None = Field(default=None)  # -> CU7  Gestionar Proveedores
+    sucursal_id: int | None = Field(default=None, foreign_key="sucursal.id")
+    proveedor_id: int | None = Field(default=None)  # FK -> CU7 Gestionar Proveedores
 
     fecha_registro: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
