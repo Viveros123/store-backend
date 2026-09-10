@@ -37,6 +37,7 @@ def health_db(session: SessionDep) -> dict:
 # --- Routers por módulo (se agregan a medida que avanzan los casos de uso) ---
 from app.modules.catalogo.router import router as catalogo_router  # noqa: E402
 from app.modules.identidad.router import router as identidad_router  # noqa: E402
+from app.modules.productos.router import router as productos_router  # noqa: E402
 from app.modules.proveedores.router import router as proveedores_router  # noqa: E402
 from app.modules.sucursales.router import router as sucursales_router  # noqa: E402
 
@@ -44,3 +45,4 @@ app.include_router(identidad_router)
 app.include_router(sucursales_router)
 app.include_router(proveedores_router)
 app.include_router(catalogo_router)
+app.include_router(productos_router)
