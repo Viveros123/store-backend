@@ -10,7 +10,9 @@ from app.core.security import create_access_token
 from app.modules.identidad import service
 from app.modules.identidad.models import RolNombre, Usuario
 from app.modules.identidad.schemas import (
+    CambioPasswordIn,
     ClienteRegistroIn,
+    MiCuentaUpdate,
     RolOut,
     TokenOut,
     UsuarioCreate,
@@ -57,8 +59,27 @@ def login(  # CU2 (base)
 
 
 @router.get("/auth/me", response_model=UsuarioOut, tags=["auth"])
-def me(current: CurrentUser, session: SessionDep):  # CU2 (base)
+def me(current: CurrentUser, session: SessionDep):  # CU2
     return service.to_usuario_out(session, current)
+
+
+@router.patch("/auth/me", response_model=UsuarioOut, tags=["auth"])
+def actualizar_mi_cuenta(  # CU2
+    data: MiCuentaUpdate, current: CurrentUser, session: SessionDep
+):
+    usuario = service.actualizar_mi_cuenta(session, current, data)
+    return service.to_usuario_out(session, usuario)
+
+
+@router.post(
+    "/auth/cambiar-password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["auth"],
+)
+def cambiar_password(  # CU2
+    data: CambioPasswordIn, current: CurrentUser, session: SessionDep
+):
+    service.cambiar_password(session, current, data)
 
 
 # --------------------------------------------------------------------------- #

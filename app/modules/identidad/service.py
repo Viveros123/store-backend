@@ -6,7 +6,9 @@ from sqlmodel import Session, func, or_, select
 from app.core.security import hash_password, verify_password
 from app.modules.identidad.models import Rol, RolNombre, Usuario
 from app.modules.identidad.schemas import (
+    CambioPasswordIn,
     ClienteRegistroIn,
+    MiCuentaUpdate,
     UsuarioCreate,
     UsuarioOut,
     UsuarioUpdate,
@@ -72,6 +74,32 @@ def registrar_cliente(session: Session, data: ClienteRegistroIn) -> Usuario:
     session.commit()
     session.refresh(usuario)
     return usuario
+
+
+def actualizar_mi_cuenta(
+    session: Session, usuario: Usuario, data: MiCuentaUpdate
+) -> Usuario:
+    """CU2 — actualiza los datos propios del usuario."""
+    for campo, valor in data.model_dump(exclude_unset=True).items():
+        setattr(usuario, campo, valor)
+    session.add(usuario)
+    session.commit()
+    session.refresh(usuario)
+    return usuario
+
+
+def cambiar_password(
+    session: Session, usuario: Usuario, data: CambioPasswordIn
+) -> None:
+    """CU2 — cambia la propia contraseña verificando la actual."""
+    if not verify_password(data.password_actual, usuario.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="La contraseña actual es incorrecta",
+        )
+    usuario.password_hash = hash_password(data.password_nueva)
+    session.add(usuario)
+    session.commit()
 
 
 def authenticate(session: Session, email: str, password: str) -> Usuario:

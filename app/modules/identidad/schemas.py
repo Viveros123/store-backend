@@ -81,3 +81,18 @@ class ClienteRegistroIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=72)
     telefono: str | None = Field(default=None, max_length=20)
+
+
+class MiCuentaUpdate(BaseModel):
+    """CU2 — el usuario edita sus propios datos."""
+
+    nombre: str | None = Field(default=None, min_length=2, max_length=80)
+    apellido: str | None = Field(default=None, min_length=2, max_length=80)
+    telefono: str | None = Field(default=None, max_length=20)
+
+
+class CambioPasswordIn(BaseModel):
+    """CU2 — cambio de la propia contraseña."""
+
+    password_actual: str
+    password_nueva: str = Field(min_length=8, max_length=72)
