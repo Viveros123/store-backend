@@ -40,7 +40,7 @@ class Usuario(SQLModel, table=True):
 
     rol_id: int = Field(foreign_key="rol.id")
     sucursal_id: int | None = Field(default=None, foreign_key="sucursal.id")
-    proveedor_id: int | None = Field(default=None)  # FK -> CU7 Gestionar Proveedores
+    proveedor_id: int | None = Field(default=None, foreign_key="proveedor.id")
 
     fecha_registro: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)

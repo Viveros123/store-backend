@@ -182,6 +182,18 @@ def _validar_sucursal(session: Session, sucursal_id: int | None) -> None:
         )
 
 
+def _validar_proveedor(session: Session, proveedor_id: int | None) -> None:
+    if proveedor_id is None:
+        return
+    from app.modules.proveedores.models import Proveedor
+
+    if session.get(Proveedor, proveedor_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"El proveedor {proveedor_id} no existe",
+        )
+
+
 def create_usuario(session: Session, data: UsuarioCreate) -> Usuario:
     if get_usuario_by_email(session, data.email):
         raise HTTPException(
@@ -190,6 +202,7 @@ def create_usuario(session: Session, data: UsuarioCreate) -> Usuario:
         )
     _validar_rol(session, data.rol_id)
     _validar_sucursal(session, data.sucursal_id)
+    _validar_proveedor(session, data.proveedor_id)
 
     usuario = Usuario(
         nombre=data.nombre,
@@ -239,6 +252,8 @@ def update_usuario(
         usuario.rol_id = cambios["rol_id"]
     if "sucursal_id" in cambios:
         _validar_sucursal(session, cambios["sucursal_id"])
+    if "proveedor_id" in cambios:
+        _validar_proveedor(session, cambios["proveedor_id"])
     if "password" in cambios and cambios["password"]:
         usuario.password_hash = hash_password(cambios["password"])
 
