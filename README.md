@@ -11,38 +11,55 @@ Examen 1 · Sistemas II · S2-2026 · Grupo 44 · UAGRM.
 - Autenticación JWT + bcrypt
 - Despliegue en la nube (Render)
 
-## Requisitos
-
-- Python 3.12+
-- Una base PostgreSQL (local o Neon)
-
 ## Puesta en marcha (desarrollo)
 
 ```bash
-python -m venv venv
-venv\Scripts\activate           # Windows
+py -3.12 -m venv venv
+venv\Scripts\activate
 pip install -r requirements.txt
-copy .env.example .env           # y completar DATABASE_URL, SECRET_KEY
-alembic upgrade head
+copy .env.example .env          REM completar DATABASE_URL y SECRET_KEY
+alembic upgrade head            REM crea las tablas en la base
+python -m app.seed              REM roles + usuario administrador
 uvicorn app.main:app --reload
 ```
 
-La documentación interactiva queda en `http://localhost:8000/docs`.
+- API: `http://localhost:8000`
+- Documentación interactiva (Swagger): `http://localhost:8000/docs`
+- Admin inicial: `admin@fashionstore.com` / `Admin123!` (configurable en `.env`)
 
 ## Estructura
 
 ```
 app/
-  core/      configuración, seguridad, dependencias
-  models/    modelos SQLModel (tablas)
-  schemas/   esquemas Pydantic (entrada/salida de la API)
-  routers/   endpoints por dominio
-  main.py    punto de entrada
-alembic/     migraciones
+  core/                configuración transversal
+    config.py            variables de entorno
+    db.py                motor + sesión de BD
+    security.py          hash de contraseñas + JWT
+    deps.py              dependencias: sesión, usuario actual, control de roles
+  modules/             un paquete por dominio (= paquetes de casos de uso)
+    identidad/           Rol, Usuario, autenticación
+      models.py            tablas SQLModel
+      schemas.py           entrada/salida de la API (Pydantic)
+      service.py           lógica de negocio
+      router.py            endpoints
+  db_models.py          importa todos los modelos (lo usa Alembic)
+  seed.py               datos iniciales
+  main.py               crea la app y engancha los routers
+alembic/               migraciones de base de datos
+```
+
+Cada endpoint lleva un comentario `# CUnn` que lo liga a su caso de uso.
+
+## Migraciones
+
+```bash
+alembic revision --autogenerate -m "modulo: descripcion del cambio"
+alembic upgrade head          # aplicar
+alembic downgrade -1          # revertir la última
 ```
 
 ## Repositorios del proyecto
 
 - `store-backend` — este repo
-- `store-frontend` — aplicación web (Angular)
+- `store-frontend` — aplicación web (Angular + Material + Tailwind)
 - `store-movil` — aplicación móvil (Flutter)

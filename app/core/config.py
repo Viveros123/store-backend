@@ -16,6 +16,15 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 1440
 
+    # Usuario administrador inicial (lo crea el seed)
+    first_admin_email: str = "admin@fashionstore.com"
+    first_admin_password: str = "Admin123!"
+    first_admin_nombre: str = "Administrador"
+    first_admin_apellido: str = "General"
+
+    # CORS: orígenes del frontend permitidos (separados por coma)
+    cors_origins: str = "http://localhost:4200"
+
     @property
     def sqlalchemy_url(self) -> str:
         """SQLAlchemy necesita el driver explícito. Neon entrega 'postgresql://',
@@ -24,6 +33,10 @@ class Settings(BaseSettings):
         if url.startswith("postgresql://"):
             url = url.replace("postgresql://", "postgresql+psycopg://", 1)
         return url
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
 
 settings = Settings()
