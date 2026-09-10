@@ -242,3 +242,122 @@ def delete_variante(session: Session, variante_id: int) -> None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Variante no encontrada")
     session.delete(v)
     session.commit()
+
+
+# --------------------------------------------------------------------------- #
+#  CU8 — Portal del proveedor (productos de su propia empresa)
+# --------------------------------------------------------------------------- #
+def _producto_del_proveedor(
+    session: Session, producto_id: int, proveedor_id: int
+) -> Producto:
+    p = session.get(Producto, producto_id)
+    if p is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Producto no encontrado")
+    if p.proveedor_id != proveedor_id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Este producto es de otro proveedor"
+        )
+    return p
+
+
+def list_productos_proveedor(
+    session: Session, proveedor_id: int, *, q=None, page=1, size=20
+) -> tuple[list[dict], int]:
+    filtros = [Producto.proveedor_id == proveedor_id]
+    if q:
+        filtros.append(func.lower(Producto.nombre).like(f"%{q.strip().lower()}%"))
+    items, total = paginate(
+        session, Producto, filters=filtros, order_by=Producto.nombre, page=page, size=size
+    )
+    return [_producto_out(session, p) for p in items], total
+
+
+def get_detalle_proveedor(
+    session: Session, producto_id: int, proveedor_id: int
+) -> dict:
+    p = _producto_del_proveedor(session, producto_id, proveedor_id)
+    out = _producto_out(session, p)
+    variantes = session.exec(
+        select(ProductoVariante)
+        .where(ProductoVariante.producto_id == producto_id)
+        .order_by(ProductoVariante.id)
+    ).all()
+    out["variantes"] = [_variante_out(session, v, p.precio_base) for v in variantes]
+    return out
+
+
+def create_producto_proveedor(
+    session: Session, proveedor_id: int, data
+) -> dict:
+    # El proveedor no elige proveedor_id ni puede activar el producto.
+    if session.get(Categoria, data.categoria_id) is None:
+        raise HTTPException(422, "La categoría no existe")
+    if data.coleccion_id is not None and session.get(Coleccion, data.coleccion_id) is None:
+        raise HTTPException(422, "La colección no existe")
+
+    p = Producto(
+        nombre=data.nombre,
+        descripcion=data.descripcion,
+        categoria_id=data.categoria_id,
+        coleccion_id=data.coleccion_id,
+        proveedor_id=proveedor_id,
+        precio_base=data.precio_base,
+        imagen_url=data.imagen_url,
+        activo=False,  # pendiente de activación por el administrador
+    )
+    session.add(p)
+    session.commit()
+    session.refresh(p)
+    return _producto_out(session, p)
+
+
+def update_producto_proveedor(
+    session: Session, producto_id: int, proveedor_id: int, data
+) -> dict:
+    p = _producto_del_proveedor(session, producto_id, proveedor_id)
+    cambios = data.model_dump(exclude_unset=True)
+    cambios.pop("activo", None)
+    cambios.pop("proveedor_id", None)
+    _validar_refs_producto(
+        session,
+        categoria_id=cambios.get("categoria_id"),
+        coleccion_id=cambios.get("coleccion_id"),
+        proveedor_id=None,
+    )
+    for k, v in cambios.items():
+        setattr(p, k, v)
+    session.add(p)
+    session.commit()
+    session.refresh(p)
+    return _producto_out(session, p)
+
+
+def _variante_del_proveedor(
+    session: Session, variante_id: int, proveedor_id: int
+) -> ProductoVariante:
+    v = session.get(ProductoVariante, variante_id)
+    if v is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Variante no encontrada")
+    _producto_del_proveedor(session, v.producto_id, proveedor_id)
+    return v
+
+
+def add_variante_proveedor(
+    session: Session, producto_id: int, proveedor_id: int, data
+) -> dict:
+    _producto_del_proveedor(session, producto_id, proveedor_id)
+    return add_variante(session, producto_id, data)
+
+
+def update_variante_proveedor(
+    session: Session, variante_id: int, proveedor_id: int, data
+) -> dict:
+    _variante_del_proveedor(session, variante_id, proveedor_id)
+    return update_variante(session, variante_id, data)
+
+
+def delete_variante_proveedor(
+    session: Session, variante_id: int, proveedor_id: int
+) -> None:
+    _variante_del_proveedor(session, variante_id, proveedor_id)
+    delete_variante(session, variante_id)
