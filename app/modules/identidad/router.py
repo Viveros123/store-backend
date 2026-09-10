@@ -10,6 +10,7 @@ from app.core.security import create_access_token
 from app.modules.identidad import service
 from app.modules.identidad.models import RolNombre, Usuario
 from app.modules.identidad.schemas import (
+    ClienteRegistroIn,
     RolOut,
     TokenOut,
     UsuarioCreate,
@@ -27,6 +28,21 @@ AdminUser = Annotated[Usuario, Depends(require_roles(RolNombre.ADMINISTRADOR))]
 # --------------------------------------------------------------------------- #
 #  Autenticación
 # --------------------------------------------------------------------------- #
+@router.post(
+    "/auth/registro",
+    response_model=TokenOut,
+    status_code=status.HTTP_201_CREATED,
+    tags=["auth"],
+)
+def registro(data: ClienteRegistroIn, session: SessionDep):  # CU1
+    usuario = service.registrar_cliente(session, data)
+    token = create_access_token(usuario.id)
+    return TokenOut(
+        access_token=token,
+        usuario=service.to_usuario_out(session, usuario),
+    )
+
+
 @router.post("/auth/login", response_model=TokenOut, tags=["auth"])
 def login(  # CU2 (base)
     form: Annotated[OAuth2PasswordRequestForm, Depends()],

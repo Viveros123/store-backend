@@ -71,3 +71,13 @@ class TokenOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
     usuario: UsuarioOut
+
+
+class ClienteRegistroIn(BaseModel):
+    """CU1 — registro público: crea una cuenta con rol Cliente."""
+
+    nombre: str = Field(min_length=2, max_length=80)
+    apellido: str = Field(min_length=2, max_length=80)
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=72)
+    telefono: str | None = Field(default=None, max_length=20)

@@ -4,8 +4,9 @@ from fastapi import HTTPException, status
 from sqlmodel import Session, func, or_, select
 
 from app.core.security import hash_password, verify_password
-from app.modules.identidad.models import Rol, Usuario
+from app.modules.identidad.models import Rol, RolNombre, Usuario
 from app.modules.identidad.schemas import (
+    ClienteRegistroIn,
     UsuarioCreate,
     UsuarioOut,
     UsuarioUpdate,
@@ -43,6 +44,36 @@ def to_usuario_out(session: Session, usuario: Usuario) -> UsuarioOut:
 # --------------------------------------------------------------------------- #
 #  Autenticación
 # --------------------------------------------------------------------------- #
+def registrar_cliente(session: Session, data: ClienteRegistroIn) -> Usuario:
+    """CU1 — alta pública de un cliente."""
+    if get_usuario_by_email(session, data.email):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Ya existe una cuenta registrada con ese email",
+        )
+    rol_cliente = session.exec(
+        select(Rol).where(Rol.nombre == RolNombre.CLIENTE)
+    ).first()
+    if rol_cliente is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="El rol Cliente no está configurado (ejecutar el seed)",
+        )
+
+    usuario = Usuario(
+        nombre=data.nombre,
+        apellido=data.apellido,
+        email=str(data.email),
+        password_hash=hash_password(data.password),
+        telefono=data.telefono,
+        rol_id=rol_cliente.id,
+    )
+    session.add(usuario)
+    session.commit()
+    session.refresh(usuario)
+    return usuario
+
+
 def authenticate(session: Session, email: str, password: str) -> Usuario:
     usuario = get_usuario_by_email(session, email)
     if not usuario or not verify_password(password, usuario.password_hash):
