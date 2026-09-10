@@ -1,7 +1,10 @@
 """Modelos del módulo Catálogo: datos base de las prendas.
 
 CU5 — Categorías, Tallas y Colores.
+CU6 — Temporadas y Colecciones.
 """
+
+from datetime import date
 
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
@@ -38,4 +41,24 @@ class Color(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     nombre: str = Field(max_length=40, unique=True, index=True)
     codigo_hex: str | None = Field(default=None, max_length=7)  # #RRGGBB
+    activo: bool = Field(default=True)
+
+
+class Temporada(SQLModel, table=True):
+    __tablename__ = "temporada"
+
+    id: int | None = Field(default=None, primary_key=True)
+    nombre: str = Field(max_length=60, unique=True, index=True)
+    fecha_inicio: date | None = Field(default=None)
+    fecha_fin: date | None = Field(default=None)
+    activo: bool = Field(default=True)
+
+
+class Coleccion(SQLModel, table=True):
+    __tablename__ = "coleccion"
+
+    id: int | None = Field(default=None, primary_key=True)
+    nombre: str = Field(max_length=80, index=True)
+    descripcion: str | None = Field(default=None, max_length=300)
+    temporada_id: int = Field(foreign_key="temporada.id")
     activo: bool = Field(default=True)

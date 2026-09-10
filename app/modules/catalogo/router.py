@@ -11,6 +11,10 @@ from app.modules.catalogo.schemas import (
     CategoriaOut,
     CategoriaPage,
     CategoriaUpdate,
+    ColeccionCreate,
+    ColeccionOut,
+    ColeccionPage,
+    ColeccionUpdate,
     ColorCreate,
     ColorOut,
     ColorPage,
@@ -19,6 +23,10 @@ from app.modules.catalogo.schemas import (
     TallaOut,
     TallaPage,
     TallaUpdate,
+    TemporadaCreate,
+    TemporadaOut,
+    TemporadaPage,
+    TemporadaUpdate,
 )
 from app.modules.identidad.models import RolNombre, Usuario
 
@@ -148,3 +156,85 @@ def actualizar_color(  # CU5
     color_id: int, data: ColorUpdate, session: SessionDep, _admin: AdminUser
 ):
     return service.update_color(session, color_id, data)
+
+
+# --------------------------------------------------------------------------- #
+#  CU6 — Temporadas
+# --------------------------------------------------------------------------- #
+@router.get("/temporadas/opciones", response_model=list[TemporadaOut])
+def temporadas_opciones(session: SessionDep, _: CurrentUser):  # CU6
+    return service.temporadas_opciones(session)
+
+
+@router.get("/temporadas", response_model=TemporadaPage)
+def listar_temporadas(  # CU6
+    session: SessionDep,
+    _admin: AdminUser,
+    q: str | None = None,
+    activo: bool | None = None,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+):
+    items, total = service.list_temporadas(
+        session, q=q, activo=activo, page=page, size=size
+    )
+    return TemporadaPage(
+        items=[TemporadaOut.model_validate(x) for x in items],
+        total=total,
+        page=page,
+        size=size,
+    )
+
+
+@router.post(
+    "/temporadas", response_model=TemporadaOut, status_code=status.HTTP_201_CREATED
+)
+def crear_temporada(data: TemporadaCreate, session: SessionDep, _admin: AdminUser):  # CU6
+    return service.create_temporada(session, data)
+
+
+@router.patch("/temporadas/{temp_id}", response_model=TemporadaOut)
+def actualizar_temporada(  # CU6
+    temp_id: int, data: TemporadaUpdate, session: SessionDep, _admin: AdminUser
+):
+    return service.update_temporada(session, temp_id, data)
+
+
+# --------------------------------------------------------------------------- #
+#  CU6 — Colecciones
+# --------------------------------------------------------------------------- #
+@router.get("/colecciones/opciones", response_model=list[ColeccionOut])
+def colecciones_opciones(  # CU6
+    session: SessionDep, _: CurrentUser, temporada_id: int | None = None
+):
+    return service.colecciones_opciones(session, temporada_id)
+
+
+@router.get("/colecciones", response_model=ColeccionPage)
+def listar_colecciones(  # CU6
+    session: SessionDep,
+    _admin: AdminUser,
+    q: str | None = None,
+    temporada_id: int | None = None,
+    activo: bool | None = None,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+):
+    items, total = service.list_colecciones(
+        session, q=q, temporada_id=temporada_id, activo=activo, page=page, size=size
+    )
+    return ColeccionPage(items=items, total=total, page=page, size=size)
+
+
+@router.post(
+    "/colecciones", response_model=ColeccionOut, status_code=status.HTTP_201_CREATED
+)
+def crear_coleccion(data: ColeccionCreate, session: SessionDep, _admin: AdminUser):  # CU6
+    return service.create_coleccion(session, data)
+
+
+@router.patch("/colecciones/{col_id}", response_model=ColeccionOut)
+def actualizar_coleccion(  # CU6
+    col_id: int, data: ColeccionUpdate, session: SessionDep, _admin: AdminUser
+):
+    return service.update_coleccion(session, col_id, data)

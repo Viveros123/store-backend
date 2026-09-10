@@ -1,6 +1,8 @@
-"""Esquemas del módulo Catálogo (CU5)."""
+"""Esquemas del módulo Catálogo (CU5 y CU6)."""
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from datetime import date
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.modules.catalogo.models import TallaTipo
 
@@ -86,6 +88,67 @@ class ColorUpdate(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+#  Temporada (CU6)
+# --------------------------------------------------------------------------- #
+class TemporadaOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    nombre: str
+    fecha_inicio: date | None
+    fecha_fin: date | None
+    activo: bool
+
+
+class TemporadaCreate(BaseModel):
+    nombre: str = Field(min_length=2, max_length=60)
+    fecha_inicio: date | None = None
+    fecha_fin: date | None = None
+
+    @model_validator(mode="after")
+    def _rango(self):
+        if (
+            self.fecha_inicio
+            and self.fecha_fin
+            and self.fecha_fin < self.fecha_inicio
+        ):
+            raise ValueError("fecha_fin no puede ser anterior a fecha_inicio")
+        return self
+
+
+class TemporadaUpdate(BaseModel):
+    nombre: str | None = Field(default=None, min_length=2, max_length=60)
+    fecha_inicio: date | None = None
+    fecha_fin: date | None = None
+    activo: bool | None = None
+
+
+# --------------------------------------------------------------------------- #
+#  Colección (CU6)
+# --------------------------------------------------------------------------- #
+class ColeccionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    nombre: str
+    descripcion: str | None
+    temporada_id: int
+    temporada: str | None = None
+    activo: bool
+
+
+class ColeccionCreate(BaseModel):
+    nombre: str = Field(min_length=2, max_length=80)
+    descripcion: str | None = Field(default=None, max_length=300)
+    temporada_id: int
+
+
+class ColeccionUpdate(BaseModel):
+    nombre: str | None = Field(default=None, min_length=2, max_length=80)
+    descripcion: str | None = Field(default=None, max_length=300)
+    temporada_id: int | None = None
+    activo: bool | None = None
+
+
+# --------------------------------------------------------------------------- #
 #  Páginas
 # --------------------------------------------------------------------------- #
 class _PageBase(BaseModel):
@@ -104,3 +167,11 @@ class TallaPage(_PageBase):
 
 class ColorPage(_PageBase):
     items: list[ColorOut]
+
+
+class TemporadaPage(_PageBase):
+    items: list[TemporadaOut]
+
+
+class ColeccionPage(_PageBase):
+    items: list[ColeccionOut]
