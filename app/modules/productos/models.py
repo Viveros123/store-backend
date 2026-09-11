@@ -53,3 +53,5 @@ class ProductoVariante(SQLModel, table=True):
     sku: str = Field(max_length=50, unique=True, index=True)
     # Si es NULL, se usa el precio_base del producto.
     precio: Decimal | None = Field(default=None, max_digits=10, decimal_places=2)
+    # Si es NULL, se usa la imagen_url del producto (ej. variantes de otro color).
+    imagen_url: str | None = Field(default=None, max_length=255)

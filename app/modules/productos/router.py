@@ -76,6 +76,11 @@ def actualizar_producto(  # CU4
     return service.update_producto(session, producto_id, data)
 
 
+@router.delete("/productos/{producto_id}", status_code=status.HTTP_204_NO_CONTENT)
+def eliminar_producto(producto_id: int, session: SessionDep, _admin: AdminUser):  # CU4
+    service.delete_producto(session, producto_id)
+
+
 # --------------------------------------------------------------------------- #
 #  Variantes
 # --------------------------------------------------------------------------- #

@@ -13,6 +13,7 @@ from app.modules.catalogo.models import (
     Talla,
     Temporada,
 )
+from app.modules.inventario.models import Inventario
 from app.modules.productos.models import Producto, ProductoVariante
 from app.modules.proveedores.models import Proveedor
 
@@ -56,7 +57,7 @@ def _producto_out(session: Session, p: Producto) -> dict:
     }
 
 
-def _variante_out(session: Session, v: ProductoVariante, precio_base) -> dict:
+def _variante_out(session: Session, v: ProductoVariante, producto: Producto) -> dict:
     talla = session.get(Talla, v.talla_id)
     color = session.get(Color, v.color_id)
     return {
@@ -69,7 +70,9 @@ def _variante_out(session: Session, v: ProductoVariante, precio_base) -> dict:
         "color_hex": color.codigo_hex if color else None,
         "sku": v.sku,
         "precio": v.precio,
-        "precio_efectivo": v.precio if v.precio is not None else precio_base,
+        "precio_efectivo": v.precio if v.precio is not None else producto.precio_base,
+        "imagen_url": v.imagen_url,
+        "imagen_efectivo": v.imagen_url or producto.imagen_url,
     }
 
 
@@ -139,7 +142,7 @@ def get_producto_detalle(session: Session, producto_id: int) -> dict:
         .where(ProductoVariante.producto_id == producto_id)
         .order_by(ProductoVariante.id)
     ).all()
-    out["variantes"] = [_variante_out(session, v, p.precio_base) for v in variantes]
+    out["variantes"] = [_variante_out(session, v, p) for v in variantes]
     return out
 
 
@@ -220,7 +223,7 @@ def add_variante(session: Session, producto_id: int, data) -> dict:
     session.add(v)
     session.commit()
     session.refresh(v)
-    return _variante_out(session, v, p.precio_base)
+    return _variante_out(session, v, p)
 
 
 def update_variante(session: Session, variante_id: int, data) -> dict:
@@ -255,14 +258,52 @@ def update_variante(session: Session, variante_id: int, data) -> dict:
     session.commit()
     session.refresh(v)
     p = session.get(Producto, v.producto_id)
-    return _variante_out(session, v, p.precio_base)
+    return _variante_out(session, v, p)
+
+
+def _borrar_inventario_de_variantes(session: Session, variante_ids: list[int]) -> None:
+    """Limpia el stock (CU12/CU13) antes de borrar variante(s), por la FK.
+
+    No hay `Relationship()` declarada entre Inventario y ProductoVariante
+    (son FKs sueltas), así que SQLAlchemy no sabe ordenar el borrado solo:
+    hace falta `flush()` para que el DELETE de inventario se ejecute antes
+    de intentar borrar la variante.
+    """
+    if not variante_ids:
+        return
+    for inv in session.exec(
+        select(Inventario).where(Inventario.variante_id.in_(variante_ids))
+    ).all():
+        session.delete(inv)
+    session.flush()
+
+
+def _eliminar_variantes_del_producto(session: Session, producto_id: int) -> None:
+    variantes = session.exec(
+        select(ProductoVariante).where(ProductoVariante.producto_id == producto_id)
+    ).all()
+    _borrar_inventario_de_variantes(session, [v.id for v in variantes])
+    for v in variantes:
+        session.delete(v)
+    session.flush()  # idem: que las variantes se borren antes que el producto
 
 
 def delete_variante(session: Session, variante_id: int) -> None:
     v = session.get(ProductoVariante, variante_id)
     if v is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Variante no encontrada")
+    _borrar_inventario_de_variantes(session, [v.id])
     session.delete(v)
+    session.commit()
+
+
+def delete_producto(session: Session, producto_id: int) -> None:
+    """Admin: borra el producto, sus variantes y el stock asociado."""
+    p = session.get(Producto, producto_id)
+    if p is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Producto no encontrado")
+    _eliminar_variantes_del_producto(session, producto_id)
+    session.delete(p)
     session.commit()
 
 
@@ -304,7 +345,7 @@ def get_detalle_proveedor(
         .where(ProductoVariante.producto_id == producto_id)
         .order_by(ProductoVariante.id)
     ).all()
-    out["variantes"] = [_variante_out(session, v, p.precio_base) for v in variantes]
+    out["variantes"] = [_variante_out(session, v, p) for v in variantes]
     return out
 
 
@@ -318,10 +359,7 @@ def delete_producto_proveedor(
             status.HTTP_409_CONFLICT,
             "Este producto ya fue activado; pedile al administrador que lo dé de baja.",
         )
-    for v in session.exec(
-        select(ProductoVariante).where(ProductoVariante.producto_id == producto_id)
-    ).all():
-        session.delete(v)
+    _eliminar_variantes_del_producto(session, producto_id)
     session.delete(p)
     session.commit()
 
@@ -551,6 +589,7 @@ def get_catalogo_detalle(session: Session, producto_id: int) -> dict:
                 "color": color.nombre if color else None,
                 "color_hex": color.codigo_hex if color else None,
                 "precio_efectivo": v.precio if v.precio is not None else p.precio_base,
+                "imagen_efectivo": v.imagen_url or p.imagen_url,
             }
         )
     out["variantes"] = resultado_variantes
