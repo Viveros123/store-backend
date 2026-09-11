@@ -92,3 +92,46 @@ class ProductoPage(BaseModel):
     total: int
     page: int
     size: int
+
+
+# --------------------------------------------------------------------------- #
+#  Catálogo público (CU9) — sin costos ni datos internos
+# --------------------------------------------------------------------------- #
+class ColorMini(BaseModel):
+    id: int
+    nombre: str
+    codigo_hex: str | None
+
+
+class CatalogoProductoOut(BaseModel):
+    id: int
+    nombre: str
+    descripcion: str | None
+    categoria: str | None
+    coleccion: str | None
+    temporada: str | None
+    precio_base: Decimal
+    imagen_url: str | None
+    colores: list[ColorMini] = []
+    cantidad_variantes: int = 0
+
+
+class CatalogoVarianteOut(BaseModel):
+    id: int
+    talla_id: int
+    talla: str | None
+    color_id: int
+    color: str | None
+    color_hex: str | None
+    precio_efectivo: Decimal
+
+
+class CatalogoProductoDetalle(CatalogoProductoOut):
+    variantes: list[CatalogoVarianteOut] = []
+
+
+class CatalogoProductoPage(BaseModel):
+    items: list[CatalogoProductoOut]
+    total: int
+    page: int
+    size: int

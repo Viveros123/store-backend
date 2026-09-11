@@ -1,5 +1,7 @@
 """Lógica de negocio del módulo Productos — CU4."""
 
+from datetime import date
+
 from fastapi import HTTPException, status
 from sqlmodel import Session, func, select
 
@@ -396,3 +398,139 @@ def delete_variante_proveedor(
 ) -> None:
     _variante_del_proveedor(session, variante_id, proveedor_id)
     delete_variante(session, variante_id)
+
+
+# --------------------------------------------------------------------------- #
+#  CU9 — Catálogo público (cliente): solo productos activos, sin costos
+# --------------------------------------------------------------------------- #
+def _catalogo_producto_out(session: Session, p: Producto) -> dict:
+    cat = session.get(Categoria, p.categoria_id)
+    col = session.get(Coleccion, p.coleccion_id) if p.coleccion_id else None
+    temp = session.get(Temporada, col.temporada_id) if col else None
+
+    variantes = session.exec(
+        select(ProductoVariante).where(ProductoVariante.producto_id == p.id)
+    ).all()
+    colores_vistos: dict[int, dict] = {}
+    for v in variantes:
+        if v.color_id in colores_vistos:
+            continue
+        color = session.get(Color, v.color_id)
+        if color:
+            colores_vistos[v.color_id] = {
+                "id": color.id,
+                "nombre": color.nombre,
+                "codigo_hex": color.codigo_hex,
+            }
+
+    return {
+        "id": p.id,
+        "nombre": p.nombre,
+        "descripcion": p.descripcion,
+        "categoria": cat.nombre if cat else None,
+        "coleccion": col.nombre if col else None,
+        "temporada": temp.nombre if temp else None,
+        "precio_base": p.precio_base,
+        "imagen_url": p.imagen_url,
+        "colores": list(colores_vistos.values()),
+        "cantidad_variantes": len(variantes),
+    }
+
+
+def _temporadas_vigentes_ids(session: Session) -> list[int]:
+    hoy = date.today()
+    temporadas = session.exec(select(Temporada).where(Temporada.activo == True)).all()  # noqa: E712
+    return [
+        t.id
+        for t in temporadas
+        if (t.fecha_inicio is None or t.fecha_inicio <= hoy)
+        and (t.fecha_fin is None or hoy <= t.fecha_fin)
+    ]
+
+
+def list_catalogo(
+    session: Session,
+    *,
+    q: str | None = None,
+    categoria_id: int | None = None,
+    coleccion_id: int | None = None,
+    orden: str = "novedad",
+    page: int = 1,
+    size: int = 20,
+) -> tuple[list[dict], int]:
+    filtros = [Producto.activo == True, Producto.precio_base.is_not(None)]  # noqa: E712
+    if q:
+        filtros.append(func.lower(Producto.nombre).like(f"%{q.strip().lower()}%"))
+    if categoria_id is not None:
+        filtros.append(Producto.categoria_id == categoria_id)
+    if coleccion_id is not None:
+        filtros.append(Producto.coleccion_id == coleccion_id)
+
+    orden_map = {
+        "novedad": Producto.fecha_creacion.desc(),
+        "precio_asc": Producto.precio_base.asc(),
+        "precio_desc": Producto.precio_base.desc(),
+        "nombre": Producto.nombre.asc(),
+    }
+    order_by = orden_map.get(orden, Producto.fecha_creacion.desc())
+
+    items, total = paginate(
+        session, Producto, filters=filtros, order_by=order_by, page=page, size=size
+    )
+    return [_catalogo_producto_out(session, p) for p in items], total
+
+
+def list_destacados(session: Session, limit: int = 12) -> list[dict]:
+    """Vitrina de la portada: productos de temporadas vigentes."""
+    ids_vigentes = _temporadas_vigentes_ids(session)
+    if not ids_vigentes:
+        return []
+    colecciones = session.exec(
+        select(Coleccion).where(
+            Coleccion.temporada_id.in_(ids_vigentes), Coleccion.activo == True  # noqa: E712
+        )
+    ).all()
+    col_ids = [c.id for c in colecciones]
+    if not col_ids:
+        return []
+    productos = session.exec(
+        select(Producto)
+        .where(
+            Producto.activo == True,  # noqa: E712
+            Producto.precio_base.is_not(None),
+            Producto.coleccion_id.in_(col_ids),
+        )
+        .order_by(Producto.fecha_creacion.desc())
+        .limit(limit)
+    ).all()
+    return [_catalogo_producto_out(session, p) for p in productos]
+
+
+def get_catalogo_detalle(session: Session, producto_id: int) -> dict:
+    p = session.get(Producto, producto_id)
+    if p is None or not p.activo or p.precio_base is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Producto no encontrado")
+
+    out = _catalogo_producto_out(session, p)
+    variantes = session.exec(
+        select(ProductoVariante)
+        .where(ProductoVariante.producto_id == producto_id)
+        .order_by(ProductoVariante.id)
+    ).all()
+    resultado_variantes = []
+    for v in variantes:
+        talla = session.get(Talla, v.talla_id)
+        color = session.get(Color, v.color_id)
+        resultado_variantes.append(
+            {
+                "id": v.id,
+                "talla_id": v.talla_id,
+                "talla": talla.valor if talla else None,
+                "color_id": v.color_id,
+                "color": color.nombre if color else None,
+                "color_hex": color.codigo_hex if color else None,
+                "precio_efectivo": v.precio if v.precio is not None else p.precio_base,
+            }
+        )
+    out["variantes"] = resultado_variantes
+    return out
