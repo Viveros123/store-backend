@@ -94,6 +94,12 @@ class ProductoPage(BaseModel):
     size: int
 
 
+class ProductoOpcion(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    nombre: str
+
+
 # --------------------------------------------------------------------------- #
 #  Catálogo público (CU9) — sin costos ni datos internos
 # --------------------------------------------------------------------------- #

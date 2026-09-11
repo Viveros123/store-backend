@@ -10,6 +10,7 @@ from app.modules.productos import service
 from app.modules.productos.schemas import (
     ProductoCreate,
     ProductoDetalle,
+    ProductoOpcion,
     ProductoOut,
     ProductoPage,
     ProductoUpdate,
@@ -26,6 +27,11 @@ AdminUser = Annotated[Usuario, Depends(require_roles(RolNombre.ADMINISTRADOR))]
 # --------------------------------------------------------------------------- #
 #  Productos
 # --------------------------------------------------------------------------- #
+@router.get("/productos/opciones", response_model=list[ProductoOpcion])
+def productos_opciones(session: SessionDep, _admin: AdminUser):  # CU13 (selects)
+    return service.productos_opciones(session)
+
+
 @router.get("/productos", response_model=ProductoPage)
 def listar_productos(  # CU4
     session: SessionDep,

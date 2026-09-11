@@ -9,6 +9,8 @@ from app.modules.catalogo.service import (
     colores_opciones,
     tallas_opciones,
 )
+from app.modules.inventario.schemas import DisponibilidadSucursal
+from app.modules.inventario.service import disponibilidad_variante
 from app.modules.productos import service
 from app.modules.productos.schemas import (
     CatalogoProductoDetalle,
@@ -72,3 +74,11 @@ def listar_productos(  # CU9 / CU10
 @router.get("/productos/{producto_id}", response_model=CatalogoProductoDetalle)
 def obtener_producto(producto_id: int, session: SessionDep):  # CU9
     return service.get_catalogo_detalle(session, producto_id)
+
+
+@router.get(
+    "/variantes/{variante_id}/disponibilidad",
+    response_model=list[DisponibilidadSucursal],
+)
+def disponibilidad(variante_id: int, session: SessionDep):  # CU12
+    return disponibilidad_variante(session, variante_id)

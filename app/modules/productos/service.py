@@ -123,6 +123,12 @@ def list_productos(
     return [_producto_out(session, p) for p in items], total
 
 
+def productos_opciones(session: Session) -> list[Producto]:
+    return session.exec(
+        select(Producto).where(Producto.activo == True).order_by(Producto.nombre)  # noqa: E712
+    ).all()
+
+
 def get_producto_detalle(session: Session, producto_id: int) -> dict:
     p = session.get(Producto, producto_id)
     if p is None:
