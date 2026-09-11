@@ -78,6 +78,13 @@ def editar_producto(  # CU8
     )
 
 
+@router.delete("/productos/{producto_id}", status_code=status.HTTP_204_NO_CONTENT)
+def eliminar_producto(  # CU8
+    producto_id: int, session: SessionDep, user: ProveedorUser
+):
+    service.delete_producto_proveedor(session, producto_id, _proveedor_id(user))
+
+
 @router.post(
     "/productos/{producto_id}/variantes",
     response_model=VarianteOut,

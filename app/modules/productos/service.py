@@ -300,6 +300,24 @@ def get_detalle_proveedor(
     return out
 
 
+def delete_producto_proveedor(
+    session: Session, producto_id: int, proveedor_id: int
+) -> None:
+    """El proveedor solo puede borrar productos que todavía no fueron activados."""
+    p = _producto_del_proveedor(session, producto_id, proveedor_id)
+    if p.activo:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Este producto ya fue activado; pedile al administrador que lo dé de baja.",
+        )
+    for v in session.exec(
+        select(ProductoVariante).where(ProductoVariante.producto_id == producto_id)
+    ).all():
+        session.delete(v)
+    session.delete(p)
+    session.commit()
+
+
 def create_producto_proveedor(
     session: Session, proveedor_id: int, data
 ) -> dict:
