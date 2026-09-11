@@ -454,6 +454,10 @@ def list_catalogo(
     q: str | None = None,
     categoria_id: int | None = None,
     coleccion_id: int | None = None,
+    talla_id: int | None = None,
+    color_id: int | None = None,
+    precio_min: float | None = None,
+    precio_max: float | None = None,
     orden: str = "novedad",
     page: int = 1,
     size: int = 20,
@@ -465,6 +469,17 @@ def list_catalogo(
         filtros.append(Producto.categoria_id == categoria_id)
     if coleccion_id is not None:
         filtros.append(Producto.coleccion_id == coleccion_id)
+    if precio_min is not None:
+        filtros.append(Producto.precio_base >= precio_min)
+    if precio_max is not None:
+        filtros.append(Producto.precio_base <= precio_max)
+    if talla_id is not None or color_id is not None:
+        subq = select(ProductoVariante.producto_id)
+        if talla_id is not None:
+            subq = subq.where(ProductoVariante.talla_id == talla_id)
+        if color_id is not None:
+            subq = subq.where(ProductoVariante.color_id == color_id)
+        filtros.append(Producto.id.in_(subq))
 
     orden_map = {
         "novedad": Producto.fecha_creacion.desc(),
