@@ -28,6 +28,11 @@ def _producto_out(session: Session, p: Producto) -> dict:
             ProductoVariante.producto_id == p.id
         )
     ).one()
+    margen = (
+        p.precio_base - p.precio_compra
+        if p.precio_base is not None and p.precio_compra is not None
+        else None
+    )
     return {
         "id": p.id,
         "nombre": p.nombre,
@@ -39,7 +44,9 @@ def _producto_out(session: Session, p: Producto) -> dict:
         "temporada": temp.nombre if temp else None,
         "proveedor_id": p.proveedor_id,
         "proveedor": prov.nombre_empresa if prov else None,
+        "precio_compra": p.precio_compra,
         "precio_base": p.precio_base,
+        "margen": margen,
         "imagen_url": p.imagen_url,
         "activo": p.activo,
         "fecha_creacion": p.fecha_creacion,
@@ -155,6 +162,13 @@ def update_producto(session: Session, producto_id: int, data) -> dict:
     )
     for k, v in cambios.items():
         setattr(p, k, v)
+
+    if p.activo and p.precio_base is None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Asigná un precio de venta antes de activar el producto",
+        )
+
     session.add(p)
     session.commit()
     session.refresh(p)
@@ -301,7 +315,8 @@ def create_producto_proveedor(
         categoria_id=data.categoria_id,
         coleccion_id=data.coleccion_id,
         proveedor_id=proveedor_id,
-        precio_base=data.precio_base,
+        precio_compra=data.precio_compra,
+        precio_base=None,  # el precio de venta lo fija el administrador
         imagen_url=data.imagen_url,
         activo=False,  # pendiente de activación por el administrador
     )
@@ -316,8 +331,10 @@ def update_producto_proveedor(
 ) -> dict:
     p = _producto_del_proveedor(session, producto_id, proveedor_id)
     cambios = data.model_dump(exclude_unset=True)
+    # El proveedor no fija ni el precio de venta ni la activación.
     cambios.pop("activo", None)
     cambios.pop("proveedor_id", None)
+    cambios.pop("precio_base", None)
     _validar_refs_producto(
         session,
         categoria_id=cambios.get("categoria_id"),

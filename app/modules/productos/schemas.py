@@ -1,4 +1,4 @@
-"""Esquemas del módulo Productos — CU4."""
+"""Esquemas del módulo Productos — CU4 / CU8."""
 
 from datetime import datetime
 from decimal import Decimal
@@ -51,7 +51,9 @@ class ProductoOut(BaseModel):
     temporada: str | None
     proveedor_id: int
     proveedor: str | None
-    precio_base: Decimal
+    precio_compra: Decimal | None
+    precio_base: Decimal | None
+    margen: Decimal | None = None  # precio_base - precio_compra
     imagen_url: str | None
     activo: bool
     fecha_creacion: datetime
@@ -68,7 +70,8 @@ class ProductoCreate(BaseModel):
     categoria_id: int
     coleccion_id: int | None = None
     proveedor_id: int
-    precio_base: Decimal = Field(gt=0)
+    precio_compra: Decimal | None = Field(default=None, gt=0)
+    precio_base: Decimal | None = Field(default=None, gt=0)
     imagen_url: str | None = Field(default=None, max_length=255)
 
 
@@ -78,6 +81,7 @@ class ProductoUpdate(BaseModel):
     categoria_id: int | None = None
     coleccion_id: int | None = None
     proveedor_id: int | None = None
+    precio_compra: Decimal | None = Field(default=None, gt=0)
     precio_base: Decimal | None = Field(default=None, gt=0)
     imagen_url: str | None = Field(default=None, max_length=255)
     activo: bool | None = None

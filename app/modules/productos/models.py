@@ -21,7 +21,14 @@ class Producto(SQLModel, table=True):
     coleccion_id: int | None = Field(default=None, foreign_key="coleccion.id")
     proveedor_id: int = Field(foreign_key="proveedor.id")
 
-    precio_base: Decimal = Field(max_digits=10, decimal_places=2)
+    # Precio que el proveedor cobra por unidad (referencia). Lo carga el proveedor.
+    precio_compra: Decimal | None = Field(
+        default=None, max_digits=10, decimal_places=2
+    )
+    # Precio de venta al público. Lo fija el administrador; NULL = todavía sin precio.
+    precio_base: Decimal | None = Field(
+        default=None, max_digits=10, decimal_places=2
+    )
     imagen_url: str | None = Field(default=None, max_length=255)
 
     activo: bool = Field(default=True)
