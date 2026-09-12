@@ -13,7 +13,7 @@ from app.modules.catalogo.models import (
     Talla,
     Temporada,
 )
-from app.modules.inventario.models import Inventario
+from app.modules.inventario.models import Inventario, MovimientoInventario
 from app.modules.productos.models import Producto, ProductoVariante
 from app.modules.proveedores.models import Proveedor
 
@@ -262,15 +262,22 @@ def update_variante(session: Session, variante_id: int, data) -> dict:
 
 
 def _borrar_inventario_de_variantes(session: Session, variante_ids: list[int]) -> None:
-    """Limpia el stock (CU12/CU13) antes de borrar variante(s), por la FK.
+    """Limpia el stock y el historial de movimientos (CU12/CU13/CU14) antes
+    de borrar variante(s), por la FK.
 
-    No hay `Relationship()` declarada entre Inventario y ProductoVariante
+    No hay `Relationship()` declarada entre estas tablas y ProductoVariante
     (son FKs sueltas), así que SQLAlchemy no sabe ordenar el borrado solo:
-    hace falta `flush()` para que el DELETE de inventario se ejecute antes
-    de intentar borrar la variante.
+    hace falta `flush()` para que esos DELETE se ejecuten antes de intentar
+    borrar la variante.
     """
     if not variante_ids:
         return
+    for mov in session.exec(
+        select(MovimientoInventario).where(
+            MovimientoInventario.variante_id.in_(variante_ids)
+        )
+    ).all():
+        session.delete(mov)
     for inv in session.exec(
         select(Inventario).where(Inventario.variante_id.in_(variante_ids))
     ).all():
