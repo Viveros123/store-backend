@@ -47,3 +47,19 @@ class SlotsDisponibilidad(BaseModel):
     duracion_minutos: int
     cerrado: bool
     slots: list[time]
+
+
+# --------------------------------------------------------------------------- #
+#  CU18/CU19 — Vista de la sucursal (encargado / admin)
+# --------------------------------------------------------------------------- #
+class ReservaSucursalOut(ReservaOut):
+    cliente_id: int
+    cliente: str | None
+    cliente_telefono: str | None
+
+
+class ReservaSucursalPage(BaseModel):
+    items: list[ReservaSucursalOut]
+    total: int
+    page: int
+    size: int

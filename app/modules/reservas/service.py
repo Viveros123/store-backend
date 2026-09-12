@@ -1,11 +1,13 @@
-"""Lógica de negocio del módulo Reservas — CU16."""
+"""Lógica de negocio del módulo Reservas — CU16/CU17/CU18/CU19."""
 
 from datetime import date, datetime, time
 
 from fastapi import HTTPException, status
 from sqlmodel import Session, select
 
+from app.core.crud import paginate
 from app.modules.catalogo.models import Color, Talla
+from app.modules.identidad.models import Usuario
 from app.modules.inventario.models import Inventario, MovimientoInventario, TipoMovimiento
 from app.modules.productos.models import Producto, ProductoVariante
 from app.modules.reservas.models import EstadoReserva, Reserva, ReservaDetalle
@@ -261,3 +263,91 @@ def cancelar_reserva(session: Session, cliente_id: int, reserva_id: int) -> dict
     session.commit()
     session.refresh(reserva)
     return _reserva_out(session, reserva)
+
+
+# --------------------------------------------------------------------------- #
+#  CU18/CU19 — Vista de la sucursal: notificar y recepcionar
+# --------------------------------------------------------------------------- #
+def _reserva_sucursal_out(session: Session, r: Reserva) -> dict:
+    out = _reserva_out(session, r)
+    cliente = session.get(Usuario, r.cliente_id)
+    out["cliente_id"] = r.cliente_id
+    out["cliente"] = f"{cliente.nombre} {cliente.apellido}" if cliente else None
+    out["cliente_telefono"] = cliente.telefono if cliente else None
+    return out
+
+
+def _reserva_de_sucursal(
+    session: Session, reserva_id: int, sucursal_permitida: int | None
+) -> Reserva:
+    reserva = session.get(Reserva, reserva_id)
+    if reserva is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Reserva no encontrada")
+    if sucursal_permitida is not None and reserva.sucursal_id != sucursal_permitida:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Esta reserva es de otra sucursal"
+        )
+    return reserva
+
+
+def listar_por_sucursal(
+    session: Session,
+    *,
+    sucursal_id: int | None = None,
+    estado: str | None = None,
+    sucursal_permitida: int | None = None,
+    page: int = 1,
+    size: int = 20,
+) -> tuple[list[dict], int]:
+    filtros = []
+    if sucursal_permitida is not None:
+        filtros.append(Reserva.sucursal_id == sucursal_permitida)
+    elif sucursal_id is not None:
+        filtros.append(Reserva.sucursal_id == sucursal_id)
+    if estado is not None:
+        filtros.append(Reserva.estado == estado)
+
+    items, total = paginate(
+        session,
+        Reserva,
+        filters=filtros,
+        order_by=(Reserva.fecha, Reserva.hora_inicio),
+        page=page,
+        size=size,
+    )
+    return [_reserva_sucursal_out(session, r) for r in items], total
+
+
+def notificar_reserva(
+    session: Session, reserva_id: int, sucursal_permitida: int | None = None
+) -> dict:
+    """CU18 — la sucursal toma conocimiento de la reserva y avisa al cliente
+    que ya puede pasar a probarse la prenda."""
+    reserva = _reserva_de_sucursal(session, reserva_id, sucursal_permitida)
+    if reserva.estado != EstadoReserva.PENDIENTE:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Solo se pueden notificar reservas pendientes"
+        )
+    reserva.estado = EstadoReserva.NOTIFICADA
+    session.add(reserva)
+    session.commit()
+    session.refresh(reserva)
+    return _reserva_sucursal_out(session, reserva)
+
+
+def recepcionar_reserva(
+    session: Session, reserva_id: int, sucursal_permitida: int | None = None
+) -> dict:
+    """CU19 — el cliente llegó a la sucursal y se le entregó la prenda para
+    probarse; queda "atendida" a la espera de la compra (CU21+)."""
+    reserva = _reserva_de_sucursal(session, reserva_id, sucursal_permitida)
+    if reserva.estado != EstadoReserva.NOTIFICADA:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Solo se pueden recepcionar reservas ya notificadas",
+        )
+    reserva.estado = EstadoReserva.ATENDIDA
+    session.add(reserva)
+    session.commit()
+    session.refresh(reserva)
+    return _reserva_sucursal_out(session, reserva)
