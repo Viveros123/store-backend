@@ -34,3 +34,8 @@ def crear(data: ReservaCreate, session: SessionDep, user: ClienteUser):  # CU16
 @router.get("/mias", response_model=list[ReservaOut])
 def mias(session: SessionDep, user: ClienteUser):  # CU16
     return service.mis_reservas(session, user.id)
+
+
+@router.post("/{reserva_id}/cancelar", response_model=ReservaOut)
+def cancelar(reserva_id: int, session: SessionDep, user: ClienteUser):  # CU17
+    return service.cancelar_reserva(session, user.id, reserva_id)

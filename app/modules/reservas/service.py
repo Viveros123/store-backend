@@ -6,7 +6,7 @@ from fastapi import HTTPException, status
 from sqlmodel import Session, select
 
 from app.modules.catalogo.models import Color, Talla
-from app.modules.inventario.models import Inventario
+from app.modules.inventario.models import Inventario, MovimientoInventario, TipoMovimiento
 from app.modules.productos.models import Producto, ProductoVariante
 from app.modules.reservas.models import EstadoReserva, Reserva, ReservaDetalle
 from app.modules.reservas.schemas import ReservaCreate, SlotsDisponibilidad
@@ -214,3 +214,50 @@ def mis_reservas(session: Session, cliente_id: int) -> list[dict]:
         .order_by(Reserva.fecha.desc(), Reserva.hora_inicio.desc())
     ).all()
     return [_reserva_out(session, r) for r in filas]
+
+
+# --------------------------------------------------------------------------- #
+#  CU17 — Cancelar reserva
+# --------------------------------------------------------------------------- #
+def cancelar_reserva(session: Session, cliente_id: int, reserva_id: int) -> dict:
+    reserva = session.get(Reserva, reserva_id)
+    if reserva is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Reserva no encontrada")
+    if reserva.cliente_id != cliente_id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Esta reserva es de otro cliente")
+    if reserva.estado != EstadoReserva.PENDIENTE:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Esta reserva ya no se puede cancelar (no está pendiente).",
+        )
+
+    detalles = session.exec(
+        select(ReservaDetalle).where(ReservaDetalle.reserva_id == reserva_id)
+    ).all()
+    for d in detalles:
+        inv = session.exec(
+            select(Inventario).where(
+                Inventario.variante_id == d.variante_id,
+                Inventario.sucursal_id == reserva.sucursal_id,
+            )
+        ).first()
+        if inv is not None:
+            inv.cantidad_disponible += d.cantidad
+            inv.cantidad_reservada = max(0, inv.cantidad_reservada - d.cantidad)
+            session.add(inv)
+        session.add(
+            MovimientoInventario(
+                variante_id=d.variante_id,
+                sucursal_id=reserva.sucursal_id,
+                usuario_id=cliente_id,
+                tipo=TipoMovimiento.LIBERACION_RESERVA,
+                cantidad=d.cantidad,
+                nota=f"Cancelación de la reserva #{reserva.id}",
+            )
+        )
+
+    reserva.estado = EstadoReserva.CANCELADA
+    session.add(reserva)
+    session.commit()
+    session.refresh(reserva)
+    return _reserva_out(session, reserva)
