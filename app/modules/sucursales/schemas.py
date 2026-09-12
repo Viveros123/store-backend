@@ -1,6 +1,8 @@
 """Esquemas del módulo Sucursales."""
 
-from pydantic import BaseModel, ConfigDict, Field
+from datetime import time
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class SucursalOut(BaseModel):
@@ -47,3 +49,28 @@ class SucursalOpcion(BaseModel):
     id: int
     nombre: str
     ciudad: str
+
+
+# --------------------------------------------------------------------------- #
+#  CU16 — Horarios de atención (para reservas)
+# --------------------------------------------------------------------------- #
+class HorarioDia(BaseModel):
+    dia_semana: int = Field(ge=0, le=6)
+    cerrado: bool = False
+    hora_apertura: time | None = None
+    hora_cierre: time | None = None
+
+    @model_validator(mode="after")
+    def _validar_horas(self) -> "HorarioDia":
+        if not self.cerrado:
+            if self.hora_apertura is None or self.hora_cierre is None:
+                raise ValueError("Si el día no está cerrado, hace falta apertura y cierre")
+            if self.hora_apertura >= self.hora_cierre:
+                raise ValueError("La hora de apertura debe ser antes que la de cierre")
+        return self
+
+
+class HorarioSemana(BaseModel):
+    """Los 7 días, para guardar todos juntos."""
+
+    dias: list[HorarioDia] = Field(min_length=7, max_length=7)

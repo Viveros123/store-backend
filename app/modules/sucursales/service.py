@@ -3,8 +3,13 @@
 from fastapi import HTTPException, status
 from sqlmodel import Session, func, or_, select
 
-from app.modules.sucursales.models import Sucursal
-from app.modules.sucursales.schemas import SucursalCreate, SucursalUpdate
+from app.modules.sucursales.models import Sucursal, SucursalHorario
+from app.modules.sucursales.schemas import (
+    HorarioDia,
+    HorarioSemana,
+    SucursalCreate,
+    SucursalUpdate,
+)
 
 
 def list_sucursales(
@@ -71,3 +76,66 @@ def update_sucursal(
     session.commit()
     session.refresh(sucursal)
     return sucursal
+
+
+# --------------------------------------------------------------------------- #
+#  CU16 — Horarios de atención (para reservas)
+# --------------------------------------------------------------------------- #
+def get_horarios(session: Session, sucursal_id: int) -> list[SucursalHorario]:
+    get_or_404(session, sucursal_id)
+    filas = session.exec(
+        select(SucursalHorario)
+        .where(SucursalHorario.sucursal_id == sucursal_id)
+        .order_by(SucursalHorario.dia_semana)
+    ).all()
+    por_dia = {f.dia_semana: f for f in filas}
+    # Si un día no tiene fila cargada, se muestra como "cerrado" por defecto.
+    return [
+        por_dia.get(
+            d,
+            SucursalHorario(sucursal_id=sucursal_id, dia_semana=d, cerrado=True),
+        )
+        for d in range(7)
+    ]
+
+
+def set_horarios(
+    session: Session, sucursal_id: int, data: HorarioSemana
+) -> list[SucursalHorario]:
+    get_or_404(session, sucursal_id)
+    dias_vistos = {d.dia_semana for d in data.dias}
+    if dias_vistos != set(range(7)):
+        raise HTTPException(422, "Hay que mandar los 7 días de la semana, sin repetir")
+
+    existentes = session.exec(
+        select(SucursalHorario).where(SucursalHorario.sucursal_id == sucursal_id)
+    ).all()
+    for f in existentes:
+        session.delete(f)
+    session.flush()
+
+    nuevas = [
+        SucursalHorario(
+            sucursal_id=sucursal_id,
+            dia_semana=d.dia_semana,
+            cerrado=d.cerrado,
+            hora_apertura=None if d.cerrado else d.hora_apertura,
+            hora_cierre=None if d.cerrado else d.hora_cierre,
+        )
+        for d in data.dias
+    ]
+    session.add_all(nuevas)
+    session.commit()
+    return get_horarios(session, sucursal_id)
+
+
+def horario_del_dia(session: Session, sucursal_id: int, dia_semana: int) -> HorarioDia:
+    fila = session.exec(
+        select(SucursalHorario).where(
+            SucursalHorario.sucursal_id == sucursal_id,
+            SucursalHorario.dia_semana == dia_semana,
+        )
+    ).first()
+    if fila is None:
+        return HorarioDia(dia_semana=dia_semana, cerrado=True)
+    return HorarioDia.model_validate(fila, from_attributes=True)

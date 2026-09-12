@@ -8,6 +8,8 @@ from app.core.deps import CurrentUser, SessionDep, require_roles
 from app.modules.identidad.models import RolNombre, Usuario
 from app.modules.sucursales import service
 from app.modules.sucursales.schemas import (
+    HorarioDia,
+    HorarioSemana,
     SucursalCreate,
     SucursalOpcion,
     SucursalOut,
@@ -65,3 +67,15 @@ def actualizar(  # CU11
     _admin: AdminUser,
 ):
     return service.update_sucursal(session, sucursal_id, data)
+
+
+@router.get("/{sucursal_id}/horarios", response_model=list[HorarioDia])
+def obtener_horarios(sucursal_id: int, session: SessionDep, _admin: AdminUser):  # CU16
+    return service.get_horarios(session, sucursal_id)
+
+
+@router.put("/{sucursal_id}/horarios", response_model=list[HorarioDia])
+def guardar_horarios(  # CU16
+    sucursal_id: int, data: HorarioSemana, session: SessionDep, _admin: AdminUser
+):
+    return service.set_horarios(session, sucursal_id, data)
