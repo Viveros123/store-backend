@@ -17,6 +17,7 @@ from app.modules.inventario.models import Inventario, MovimientoInventario
 from app.modules.productos.models import Producto, ProductoVariante
 from app.modules.proveedores.models import Proveedor
 from app.modules.reservas.models import ReservaDetalle
+from app.modules.ventas.models import CarritoDetalle
 
 
 # --------------------------------------------------------------------------- #
@@ -297,6 +298,10 @@ def _borrar_inventario_de_variantes(session: Session, variante_ids: list[int]) -
         select(Inventario).where(Inventario.variante_id.in_(variante_ids))
     ).all():
         session.delete(inv)
+    for item in session.exec(
+        select(CarritoDetalle).where(CarritoDetalle.variante_id.in_(variante_ids))
+    ).all():
+        session.delete(item)
     session.flush()
 
 
