@@ -105,6 +105,13 @@ class Pago(SQLModel, table=True):
     stripe_session_id: str | None = Field(default=None, max_length=255)
     stripe_payment_intent_id: str | None = Field(default=None, max_length=255)
 
+    # Solo para CU25 (pago en caja, método EFECTIVO): lo que puso el
+    # cliente y el vuelto calculado. Quedan en None para STRIPE/TARJETA_CAJA.
+    monto_recibido: Decimal | None = Field(
+        default=None, max_digits=10, decimal_places=2
+    )
+    vuelto: Decimal | None = Field(default=None, max_digits=10, decimal_places=2)
+
     fecha_creacion: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )

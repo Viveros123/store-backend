@@ -88,3 +88,51 @@ class EstadoPagoOut(BaseModel):
     venta_estado: str
     pago_id: int | None
     pago_estado: str | None
+
+
+# --------------------------------------------------------------------------- #
+#  CU24/25/26 — Venta presencial, pago en caja, comprobante (rol Cajero)
+# --------------------------------------------------------------------------- #
+class ClienteBuscarOut(BaseModel):
+    id: int
+    nombre: str
+    apellido: str
+    email: str
+    telefono: str | None
+
+
+class ItemVentaPresencialIn(BaseModel):
+    variante_id: int
+    cantidad: int = Field(gt=0, le=50)
+
+
+class VentaPresencialCreate(BaseModel):
+    cliente_id: int
+    items: list[ItemVentaPresencialIn] = Field(min_length=1)
+
+
+class VentaCajaOut(VentaOut):
+    cliente_id: int
+    cliente_nombre: str
+    cajero_nombre: str | None = None
+
+
+class PagoCajaCreate(BaseModel):
+    metodo: str = Field(description="EFECTIVO o TARJETA_CAJA")
+    monto_recibido: Decimal | None = None
+
+
+class ComprobanteOut(BaseModel):
+    venta_id: int
+    fecha_creacion: datetime
+    sucursal: str
+    ciudad: str
+    direccion: str
+    cliente_nombre: str
+    cliente_email: str
+    cajero_nombre: str | None
+    items: list[ItemVentaOut]
+    total: Decimal
+    metodo_pago: str
+    monto_recibido: Decimal | None
+    vuelto: Decimal | None

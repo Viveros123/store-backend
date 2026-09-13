@@ -5,10 +5,13 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from fastapi import HTTPException, status
-from sqlmodel import Session, func, select
+from sqlmodel import Session, func, or_, select
 
 from app.core.config import settings
 from app.modules.catalogo.models import Color, Talla
+from app.modules.identidad import service as identidad_service
+from app.modules.identidad.models import Rol, RolNombre, Usuario
+from app.modules.identidad.schemas import ClienteRegistroIn
 from app.modules.inventario.models import Inventario, MovimientoInventario, TipoMovimiento
 from app.modules.productos.models import Producto, ProductoVariante
 from app.modules.sucursales.models import Sucursal
@@ -24,7 +27,14 @@ from app.modules.ventas.models import (
     Venta,
     VentaDetalle,
 )
-from app.modules.ventas.schemas import CheckoutCreate, ItemCarritoCreate, ItemCarritoUpdate
+from app.modules.ventas.schemas import (
+    CheckoutCreate,
+    ItemCarritoCreate,
+    ItemCarritoUpdate,
+    ItemVentaPresencialIn,
+    PagoCajaCreate,
+    VentaPresencialCreate,
+)
 
 
 def _get_o_crear_carrito(session: Session, cliente_id: int) -> Carrito:
@@ -436,4 +446,234 @@ def consultar_estado_pago(session: Session, cliente_id: int, venta_id: int) -> d
         "venta_estado": venta.estado,
         "pago_id": ultimo_pago.id if ultimo_pago else None,
         "pago_estado": ultimo_pago.estado if ultimo_pago else None,
+    }
+
+
+# --------------------------------------------------------------------------- #
+#  CU24/25/26 — Venta presencial, pago en caja, comprobante (rol Cajero)
+# --------------------------------------------------------------------------- #
+def _sucursal_del_cajero(cajero: Usuario) -> int:
+    if cajero.sucursal_id is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Tu cuenta no está vinculada a ninguna sucursal. Contactá al administrador.",
+        )
+    return cajero.sucursal_id
+
+
+def buscar_clientes(session: Session, q: str) -> list[Usuario]:
+    rol_cliente = session.exec(
+        select(Rol).where(Rol.nombre == RolNombre.CLIENTE)
+    ).first()
+    if rol_cliente is None:
+        return []
+    patron = f"%{q.strip().lower()}%"
+    return session.exec(
+        select(Usuario)
+        .where(
+            Usuario.rol_id == rol_cliente.id,
+            Usuario.activo == True,  # noqa: E712
+            or_(
+                func.lower(Usuario.nombre).like(patron),
+                func.lower(Usuario.apellido).like(patron),
+                func.lower(Usuario.email).like(patron),
+                func.lower(func.coalesce(Usuario.telefono, "")).like(patron),
+            ),
+        )
+        .order_by(Usuario.nombre)
+        .limit(15)
+    ).all()
+
+
+def registrar_cliente_rapido(session: Session, data: ClienteRegistroIn) -> Usuario:
+    """El cajero da de alta a un cliente nuevo desde el mostrador, con las
+    mismas reglas que el registro público (CU1), para poder ligarle la venta."""
+    return identidad_service.registrar_cliente(session, data)
+
+
+def _resolver_lineas_presencial(
+    session: Session, items: list[ItemVentaPresencialIn], sucursal_id: int
+) -> list[tuple[ProductoVariante, int, Decimal, Inventario]]:
+    lineas = []
+    for item in items:
+        variante = session.get(ProductoVariante, item.variante_id)
+        if variante is None:
+            raise HTTPException(422, "Una de las prendas ya no existe")
+        producto = session.get(Producto, variante.producto_id)
+        if producto is None or not producto.activo or producto.precio_base is None:
+            raise HTTPException(
+                422,
+                f"'{producto.nombre if producto else variante.sku}' ya no está disponible",
+            )
+        inv = session.exec(
+            select(Inventario).where(
+                Inventario.variante_id == item.variante_id,
+                Inventario.sucursal_id == sucursal_id,
+            )
+        ).first()
+        if inv is None or inv.cantidad_disponible < item.cantidad:
+            raise HTTPException(
+                422, f"No hay stock suficiente de '{producto.nombre}' en tu sucursal."
+            )
+        precio = variante.precio if variante.precio is not None else producto.precio_base
+        lineas.append((variante, item.cantidad, precio, inv))
+    return lineas
+
+
+def crear_venta_presencial(
+    session: Session, cajero: Usuario, data: VentaPresencialCreate
+) -> dict:
+    sucursal_id = _sucursal_del_cajero(cajero)
+
+    rol_cliente = session.exec(
+        select(Rol).where(Rol.nombre == RolNombre.CLIENTE)
+    ).first()
+    cliente = session.get(Usuario, data.cliente_id)
+    if cliente is None or (rol_cliente and cliente.rol_id != rol_cliente.id):
+        raise HTTPException(422, "Ese cliente no existe")
+
+    lineas = _resolver_lineas_presencial(session, data.items, sucursal_id)
+    total = sum(precio * cantidad for _, cantidad, precio, _ in lineas)
+
+    venta = Venta(
+        cliente_id=cliente.id,
+        sucursal_id=sucursal_id,
+        cajero_id=cajero.id,
+        total=total,
+    )
+    session.add(venta)
+    session.flush()  # necesitamos venta.id para el detalle
+
+    for variante, cantidad, precio, inv in lineas:
+        session.add(
+            VentaDetalle(
+                venta_id=venta.id,
+                variante_id=variante.id,
+                cantidad=cantidad,
+                precio_unitario=precio,
+                costo_unitario=inv.costo_promedio,
+            )
+        )
+        inv.cantidad_disponible -= cantidad
+        session.add(inv)
+        session.add(
+            MovimientoInventario(
+                variante_id=variante.id,
+                sucursal_id=sucursal_id,
+                usuario_id=cajero.id,
+                tipo=TipoMovimiento.SALIDA_VENTA,
+                cantidad=cantidad,
+                nota=f"Venta presencial #{venta.id}",
+            )
+        )
+
+    session.commit()
+    session.refresh(venta)
+    return _venta_out(session, venta)
+
+
+def _venta_presencial_de_la_sucursal(
+    session: Session, venta_id: int, sucursal_id: int
+) -> Venta:
+    venta = session.get(Venta, venta_id)
+    if venta is None or venta.sucursal_id != sucursal_id or venta.cajero_id is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Venta no encontrada")
+    return venta
+
+
+def procesar_pago_caja(
+    session: Session, cajero: Usuario, venta_id: int, data: PagoCajaCreate
+) -> dict:
+    sucursal_id = _sucursal_del_cajero(cajero)
+    venta = _venta_presencial_de_la_sucursal(session, venta_id, sucursal_id)
+    if venta.estado != EstadoVenta.PENDIENTE_PAGO:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Esta venta ya no está pendiente de pago"
+        )
+    if data.metodo not in (MetodoPago.EFECTIVO, MetodoPago.TARJETA_CAJA):
+        raise HTTPException(422, "Método de pago inválido para una venta en caja")
+
+    monto_recibido = None
+    vuelto = None
+    if data.metodo == MetodoPago.EFECTIVO:
+        if data.monto_recibido is None or data.monto_recibido < venta.total:
+            raise HTTPException(
+                422, "El monto recibido es menor al total de la venta"
+            )
+        monto_recibido = data.monto_recibido
+        vuelto = monto_recibido - venta.total
+
+    pago = Pago(
+        venta_id=venta.id,
+        metodo=data.metodo,
+        estado=EstadoPago.APROBADO,
+        monto=venta.total,
+        monto_recibido=monto_recibido,
+        vuelto=vuelto,
+    )
+    session.add(pago)
+
+    # A diferencia de la compra web (donde pagar y retirar son dos momentos
+    # distintos), en una venta presencial el cliente se lleva la prenda ahí
+    # mismo: pagar ya implica la venta completa, no queda un paso pendiente.
+    venta.estado = EstadoVenta.COMPLETADA
+    session.add(venta)
+    session.commit()
+    return _venta_out(session, venta)
+
+
+def _venta_caja_out(session: Session, venta: Venta) -> dict:
+    base = _venta_out(session, venta)
+    cliente = session.get(Usuario, venta.cliente_id)
+    cajero = session.get(Usuario, venta.cajero_id) if venta.cajero_id else None
+    base["cliente_id"] = venta.cliente_id
+    base["cliente_nombre"] = f"{cliente.nombre} {cliente.apellido}" if cliente else "—"
+    base["cajero_nombre"] = f"{cajero.nombre} {cajero.apellido}" if cajero else None
+    return base
+
+
+def historial_caja(session: Session, cajero: Usuario) -> list[dict]:
+    sucursal_id = _sucursal_del_cajero(cajero)
+    ventas = session.exec(
+        select(Venta)
+        .where(Venta.sucursal_id == sucursal_id, Venta.cajero_id.is_not(None))
+        .order_by(Venta.fecha_creacion.desc())
+        .limit(100)
+    ).all()
+    return [_venta_caja_out(session, v) for v in ventas]
+
+
+def emitir_comprobante(session: Session, cajero: Usuario, venta_id: int) -> dict:
+    sucursal_id = _sucursal_del_cajero(cajero)
+    venta = _venta_presencial_de_la_sucursal(session, venta_id, sucursal_id)
+    if venta.estado not in (EstadoVenta.COMPLETADA, EstadoVenta.PAGADA):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Esta venta todavía no tiene un pago aprobado"
+        )
+
+    sucursal = session.get(Sucursal, venta.sucursal_id)
+    cliente = session.get(Usuario, venta.cliente_id)
+    cajero_venta = session.get(Usuario, venta.cajero_id) if venta.cajero_id else None
+    pago = session.exec(
+        select(Pago)
+        .where(Pago.venta_id == venta.id, Pago.estado == EstadoPago.APROBADO)
+        .order_by(Pago.id.desc())
+    ).first()
+
+    return {
+        "venta_id": venta.id,
+        "fecha_creacion": venta.fecha_creacion,
+        "sucursal": sucursal.nombre if sucursal else "—",
+        "ciudad": sucursal.ciudad if sucursal else "—",
+        "direccion": sucursal.direccion if sucursal else "—",
+        "cliente_nombre": f"{cliente.nombre} {cliente.apellido}" if cliente else "—",
+        "cliente_email": cliente.email if cliente else "—",
+        "cajero_nombre": (
+            f"{cajero_venta.nombre} {cajero_venta.apellido}" if cajero_venta else None
+        ),
+        "items": _venta_out(session, venta)["items"],
+        "total": venta.total,
+        "metodo_pago": pago.metodo if pago else "—",
+        "monto_recibido": pago.monto_recibido if pago else None,
+        "vuelto": pago.vuelto if pago else None,
     }
