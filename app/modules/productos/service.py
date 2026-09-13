@@ -72,6 +72,10 @@ def _variante_out(session: Session, v: ProductoVariante, producto: Producto) -> 
         "sku": v.sku,
         "precio": v.precio,
         "precio_efectivo": v.precio if v.precio is not None else producto.precio_base,
+        "precio_compra": v.precio_compra,
+        "precio_compra_efectivo": (
+            v.precio_compra if v.precio_compra is not None else producto.precio_compra
+        ),
         "imagen_url": v.imagen_url,
         "imagen_efectivo": v.imagen_url or producto.imagen_url,
     }

@@ -21,6 +21,8 @@ class VarianteOut(BaseModel):
     sku: str
     precio: Decimal | None
     precio_efectivo: Decimal | None = None  # precio o precio_base del producto
+    precio_compra: Decimal | None = None
+    precio_compra_efectivo: Decimal | None = None  # precio_compra o el del producto
     imagen_url: str | None = None
     imagen_efectivo: str | None = None  # imagen_url o la del producto
 
@@ -30,6 +32,7 @@ class VarianteCreate(BaseModel):
     color_id: int
     sku: str = Field(min_length=1, max_length=50)
     precio: Decimal | None = Field(default=None, gt=0)
+    precio_compra: Decimal | None = Field(default=None, gt=0)
     imagen_url: str | None = Field(default=None, max_length=255)
 
 
@@ -38,6 +41,7 @@ class VarianteUpdate(BaseModel):
     color_id: int | None = None
     sku: str | None = Field(default=None, min_length=1, max_length=50)
     precio: Decimal | None = Field(default=None, gt=0)
+    precio_compra: Decimal | None = Field(default=None, gt=0)
     imagen_url: str | None = Field(default=None, max_length=255)
 
 
