@@ -467,22 +467,28 @@ def buscar_clientes(session: Session, q: str) -> list[Usuario]:
     ).first()
     if rol_cliente is None:
         return []
-    patron = f"%{q.strip().lower()}%"
-    return session.exec(
-        select(Usuario)
-        .where(
-            Usuario.rol_id == rol_cliente.id,
-            Usuario.activo == True,  # noqa: E712
+
+    q = q.strip()
+    consulta = select(Usuario).where(
+        Usuario.rol_id == rol_cliente.id,
+        Usuario.activo == True,  # noqa: E712
+    )
+    if q:
+        patron = f"%{q.lower()}%"
+        consulta = consulta.where(
             or_(
                 func.lower(Usuario.nombre).like(patron),
                 func.lower(Usuario.apellido).like(patron),
                 func.lower(Usuario.email).like(patron),
                 func.lower(func.coalesce(Usuario.telefono, "")).like(patron),
-            ),
-        )
-        .order_by(Usuario.nombre)
-        .limit(15)
-    ).all()
+            )
+        ).order_by(Usuario.nombre)
+    else:
+        # Sin texto: mostrar los últimos clientes registrados, como ayuda
+        # antes de escribir nada (igual que con la lista de prendas).
+        consulta = consulta.order_by(Usuario.fecha_registro.desc())
+
+    return session.exec(consulta.limit(15)).all()
 
 
 def registrar_cliente_rapido(session: Session, data: ClienteRegistroIn) -> Usuario:

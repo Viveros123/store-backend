@@ -60,9 +60,9 @@ def estado_pago(venta_id: int, session: SessionDep, user: ClienteUser):  # CU28
 #  CU24/25/26 — Venta presencial, pago en caja, comprobante (rol Cajero)
 # --------------------------------------------------------------------------- #
 @router.get("/clientes/buscar", response_model=list[ClienteBuscarOut])
-def buscar_clientes(q: str, session: SessionDep, cajero: CajeroUser):
-    if not q or len(q.strip()) < 2:
-        return []
+def buscar_clientes(session: SessionDep, cajero: CajeroUser, q: str = ""):
+    # q vacío = listado por defecto (para mostrar clientes recientes como
+    # ayuda antes de escribir nada), igual que con las prendas.
     usuarios = service.buscar_clientes(session, q)
     return [
         ClienteBuscarOut(
