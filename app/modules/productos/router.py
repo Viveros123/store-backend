@@ -22,13 +22,18 @@ from app.modules.productos.schemas import (
 router = APIRouter(tags=["productos"])
 
 AdminUser = Annotated[Usuario, Depends(require_roles(RolNombre.ADMINISTRADOR))]
+# El encargado de sucursal necesita leer productos/variantes para las
+# pantallas de inventario y movimientos de stock (CU13/CU14) de su sucursal.
+AdminOEncargado = Annotated[
+    Usuario, Depends(require_roles(RolNombre.ADMINISTRADOR, RolNombre.ENCARGADO))
+]
 
 
 # --------------------------------------------------------------------------- #
 #  Productos
 # --------------------------------------------------------------------------- #
 @router.get("/productos/opciones", response_model=list[ProductoOpcion])
-def productos_opciones(session: SessionDep, _admin: AdminUser):  # CU13 (selects)
+def productos_opciones(session: SessionDep, _user: AdminOEncargado):  # CU13 (selects)
     return service.productos_opciones(session)
 
 
@@ -58,7 +63,9 @@ def listar_productos(  # CU4
 
 
 @router.get("/productos/{producto_id}", response_model=ProductoDetalle)
-def obtener_producto(producto_id: int, session: SessionDep, _admin: AdminUser):  # CU4
+def obtener_producto(  # CU4
+    producto_id: int, session: SessionDep, _user: AdminOEncargado
+):
     return service.get_producto_detalle(session, producto_id)
 
 

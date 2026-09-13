@@ -45,11 +45,14 @@ def list_inventario(
     *,
     sucursal_id: int | None = None,
     q: str | None = None,
+    sucursal_permitida: int | None = None,
     page: int = 1,
     size: int = 20,
 ) -> tuple[list[dict], int]:
     filtros = []
-    if sucursal_id is not None:
+    if sucursal_permitida is not None:
+        filtros.append(Inventario.sucursal_id == sucursal_permitida)
+    elif sucursal_id is not None:
         filtros.append(Inventario.sucursal_id == sucursal_id)
     if q:
         patron = f"%{q.strip().lower()}%"
@@ -76,11 +79,18 @@ def list_inventario(
     return [_inventario_out(session, i) for i in items], total
 
 
-def ajustar_stock(session: Session, data: InventarioAjuste) -> dict:
+def ajustar_stock(
+    session: Session, data: InventarioAjuste, *, sucursal_permitida: int | None = None
+) -> dict:
     if session.get(ProductoVariante, data.variante_id) is None:
         raise HTTPException(422, "La variante no existe")
     if session.get(Sucursal, data.sucursal_id) is None:
         raise HTTPException(422, "La sucursal no existe")
+    if sucursal_permitida is not None and data.sucursal_id != sucursal_permitida:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Solo podés ajustar el stock de tu propia sucursal",
+        )
 
     inv = session.exec(
         select(Inventario).where(

@@ -18,7 +18,6 @@ from app.modules.inventario.schemas import (
 
 router = APIRouter(prefix="/inventario", tags=["inventario"])
 
-AdminUser = Annotated[Usuario, Depends(require_roles(RolNombre.ADMINISTRADOR))]
 AdminOEncargado = Annotated[
     Usuario, Depends(require_roles(RolNombre.ADMINISTRADOR, RolNombre.ENCARGADO))
 ]
@@ -41,21 +40,30 @@ def _sucursal_permitida(session: SessionDep, user: Usuario) -> int | None:
 @router.get("", response_model=InventarioPage)
 def listar(  # CU13
     session: SessionDep,
-    _admin: AdminUser,
+    user: AdminOEncargado,
     sucursal_id: int | None = None,
     q: str | None = Query(default=None, description="Busca por producto o SKU"),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=100),
 ):
+    sucursal_permitida = _sucursal_permitida(session, user)
     items, total = service.list_inventario(
-        session, sucursal_id=sucursal_id, q=q, page=page, size=size
+        session,
+        sucursal_id=sucursal_id,
+        q=q,
+        sucursal_permitida=sucursal_permitida,
+        page=page,
+        size=size,
     )
     return InventarioPage(items=items, total=total, page=page, size=size)
 
 
 @router.post("/ajustar", response_model=InventarioOut)
-def ajustar(data: InventarioAjuste, session: SessionDep, _admin: AdminUser):  # CU13
-    return service.ajustar_stock(session, data)
+def ajustar(  # CU13
+    data: InventarioAjuste, session: SessionDep, user: AdminOEncargado
+):
+    sucursal_permitida = _sucursal_permitida(session, user)
+    return service.ajustar_stock(session, data, sucursal_permitida=sucursal_permitida)
 
 
 @router.get("/movimientos", response_model=MovimientoInventarioPage)
