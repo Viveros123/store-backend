@@ -13,15 +13,16 @@ from sqlmodel import Field, SQLModel, UniqueConstraint
 
 class TipoMovimiento:
     """Tipos de movimiento válidos. Por ahora solo se puede REGISTRAR
-    (vía API) el de tipo INGRESO; los demás se generarán automáticamente
-    en CU15/CU16/CU21+ cuando existan ventas y reservas."""
+    (vía API) el de tipo INGRESO; los demás los genera el sistema solo
+    (reservas, ventas)."""
 
     INGRESO = "INGRESO"  # el proveedor entregó mercadería
     AJUSTE = "AJUSTE"  # corrección manual de conteo (CU13 "Ajustar stock")
-    SALIDA_VENTA = "SALIDA_VENTA"  # se vendió una prenda (futuro)
-    LIBERACION_RESERVA = "LIBERACION_RESERVA"  # se liberó una reserva no comprada (futuro)
+    SALIDA_VENTA = "SALIDA_VENTA"  # se vendió una prenda (CU22)
+    LIBERACION_RESERVA = "LIBERACION_RESERVA"  # se liberó una reserva no comprada (CU17)
+    ANULACION_VENTA = "ANULACION_VENTA"  # se canceló una venta pendiente de pago (CU22)
 
-    TODOS = (INGRESO, AJUSTE, SALIDA_VENTA, LIBERACION_RESERVA)
+    TODOS = (INGRESO, AJUSTE, SALIDA_VENTA, LIBERACION_RESERVA, ANULACION_VENTA)
 
 
 class Inventario(SQLModel, table=True):

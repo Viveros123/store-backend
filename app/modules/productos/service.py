@@ -17,7 +17,7 @@ from app.modules.inventario.models import Inventario, MovimientoInventario
 from app.modules.productos.models import Producto, ProductoVariante
 from app.modules.proveedores.models import Proveedor
 from app.modules.reservas.models import ReservaDetalle
-from app.modules.ventas.models import CarritoDetalle
+from app.modules.ventas.models import CarritoDetalle, VentaDetalle
 
 
 # --------------------------------------------------------------------------- #
@@ -287,6 +287,14 @@ def _borrar_inventario_de_variantes(session: Session, variante_ids: list[int]) -
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             "No se puede eliminar: hay reservas de clientes asociadas a esta prenda.",
+        )
+    tiene_ventas = session.exec(
+        select(VentaDetalle.id).where(VentaDetalle.variante_id.in_(variante_ids))
+    ).first()
+    if tiene_ventas is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "No se puede eliminar: hay ventas registradas de esta prenda.",
         )
     for mov in session.exec(
         select(MovimientoInventario).where(

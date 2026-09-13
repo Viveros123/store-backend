@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     # CORS: orígenes del frontend permitidos (separados por coma)
     cors_origins: str = "http://localhost:4200"
 
+    # Stripe (modo test) — CU27/CU28
+    stripe_secret_key: str = ""
+    stripe_publishable_key: str = ""
+    # A dónde vuelve el cliente después de pagar en Stripe (el frontend Angular).
+    frontend_url: str = "http://localhost:4200"
+
     @property
     def sqlalchemy_url(self) -> str:
         """SQLAlchemy necesita el driver explícito. Neon entrega 'postgresql://',

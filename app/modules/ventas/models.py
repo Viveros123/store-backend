@@ -1,10 +1,12 @@
-"""Modelos del módulo Ventas y Pagos — CU21 en adelante.
+"""Modelos del módulo Ventas y Pagos — CU21 (carrito), CU22 (compra web),
+CU27/CU28 (pago electrónico Stripe/QR y su confirmación).
 
-Por ahora solo el carrito (CU21). Venta/VentaDetalle/Pago se agregan
-cuando lleguemos a CU22/24-28 (compra web, venta presencial, pagos).
+CU24/25/26 (venta presencial, pago en caja, comprobante) reutilizan estas
+mismas tablas Venta/VentaDetalle/Pago cuando lleguemos a ese bloque.
 """
 
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from sqlmodel import Field, SQLModel, UniqueConstraint
 
@@ -39,3 +41,73 @@ class CarritoDetalle(SQLModel, table=True):
     carrito_id: int = Field(foreign_key="carrito.id")
     variante_id: int = Field(foreign_key="producto_variante.id")
     cantidad: int = Field(gt=0)
+
+
+class EstadoVenta:
+    PENDIENTE_PAGO = "PENDIENTE_PAGO"
+    PAGADA = "PAGADA"
+    COMPLETADA = "COMPLETADA"
+    ANULADA = "ANULADA"
+
+
+class EstadoPago:
+    PENDIENTE = "PENDIENTE"
+    PROCESANDO = "PROCESANDO"
+    APROBADO = "APROBADO"
+    RECHAZADO = "RECHAZADO"
+
+
+class MetodoPago:
+    STRIPE = "STRIPE"  # CU27 — pago web/QR
+    EFECTIVO = "EFECTIVO"  # CU25 (futuro, venta presencial)
+    TARJETA_CAJA = "TARJETA_CAJA"  # CU25 (futuro, venta presencial)
+
+
+class Venta(SQLModel, table=True):
+    __tablename__ = "venta"
+
+    id: int | None = Field(default=None, primary_key=True)
+    cliente_id: int = Field(foreign_key="usuario.id")
+    sucursal_id: int = Field(foreign_key="sucursal.id")  # dónde se retira
+    cajero_id: int | None = Field(default=None, foreign_key="usuario.id")  # CU24, null = compra web
+
+    estado: str = Field(default=EstadoVenta.PENDIENTE_PAGO, max_length=20)
+    total: Decimal = Field(max_digits=10, decimal_places=2)
+    fecha_creacion: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+
+
+class VentaDetalle(SQLModel, table=True):
+    __tablename__ = "venta_detalle"
+
+    id: int | None = Field(default=None, primary_key=True)
+    venta_id: int = Field(foreign_key="venta.id")
+    variante_id: int = Field(foreign_key="producto_variante.id")
+    cantidad: int = Field(gt=0)
+    # Foto del precio/costo al momento de la venta (para reportes exactos
+    # aunque después cambien los precios o el costo promedio).
+    precio_unitario: Decimal = Field(max_digits=10, decimal_places=2)
+    costo_unitario: Decimal | None = Field(
+        default=None, max_digits=10, decimal_places=2
+    )
+
+
+class Pago(SQLModel, table=True):
+    __tablename__ = "pago"
+
+    id: int | None = Field(default=None, primary_key=True)
+    venta_id: int = Field(foreign_key="venta.id")
+    metodo: str = Field(max_length=20)
+    estado: str = Field(default=EstadoPago.PENDIENTE, max_length=20)
+    monto: Decimal = Field(max_digits=10, decimal_places=2)
+
+    stripe_session_id: str | None = Field(default=None, max_length=255)
+    stripe_payment_intent_id: str | None = Field(default=None, max_length=255)
+
+    fecha_creacion: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+    fecha_actualizacion: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
