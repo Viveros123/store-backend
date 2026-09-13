@@ -683,3 +683,34 @@ def emitir_comprobante(session: Session, cajero: Usuario, venta_id: int) -> dict
         "monto_recibido": pago.monto_recibido if pago else None,
         "vuelto": pago.vuelto if pago else None,
     }
+
+
+# --------------------------------------------------------------------------- #
+#  CU36/CU37 — Consultar Ventas (Global para Admin, de la sucursal para Encargado)
+# --------------------------------------------------------------------------- #
+def listar_ventas_sucursal(
+    session: Session,
+    *,
+    sucursal_id: int | None,
+    estado: str | None,
+    sucursal_permitida: int | None,
+    page: int,
+    size: int,
+) -> tuple[list[dict], int]:
+    """sucursal_permitida viene del router: None = admin (puede filtrar por
+    cualquier sucursal o ver todas), un id = encargado (forzado a la suya)."""
+    base = select(Venta)
+    if sucursal_permitida is not None:
+        base = base.where(Venta.sucursal_id == sucursal_permitida)
+    elif sucursal_id is not None:
+        base = base.where(Venta.sucursal_id == sucursal_id)
+    if estado:
+        base = base.where(Venta.estado == estado)
+
+    total = session.exec(select(func.count()).select_from(base.subquery())).one()
+    ventas = session.exec(
+        base.order_by(Venta.fecha_creacion.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+    ).all()
+    return [_venta_caja_out(session, v) for v in ventas], total

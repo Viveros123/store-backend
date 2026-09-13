@@ -122,6 +122,13 @@ class PagoCajaCreate(BaseModel):
     monto_recibido: Decimal | None = None
 
 
+class VentaAdminPage(BaseModel):
+    items: list[VentaCajaOut]
+    total: int
+    page: int
+    size: int
+
+
 class ComprobanteOut(BaseModel):
     venta_id: int
     fecha_creacion: datetime

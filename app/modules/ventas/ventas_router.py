@@ -3,10 +3,10 @@ presencial, pago en caja, comprobante) y CU27/CU28 (pago electrónico)."""
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.core.deps import SessionDep, require_roles
-from app.modules.identidad.models import RolNombre, Usuario
+from app.modules.identidad.models import Rol, RolNombre, Usuario
 from app.modules.identidad.schemas import ClienteRegistroIn
 from app.modules.ventas import service
 from app.modules.ventas.schemas import (
@@ -16,6 +16,7 @@ from app.modules.ventas.schemas import (
     EstadoPagoOut,
     PagoCajaCreate,
     PagoOut,
+    VentaAdminPage,
     VentaCajaOut,
     VentaOut,
     VentaPresencialCreate,
@@ -25,6 +26,23 @@ router = APIRouter(prefix="/ventas", tags=["ventas"])
 
 ClienteUser = Annotated[Usuario, Depends(require_roles(RolNombre.CLIENTE))]
 CajeroUser = Annotated[Usuario, Depends(require_roles(RolNombre.CAJERO))]
+AdminOEncargado = Annotated[
+    Usuario, Depends(require_roles(RolNombre.ADMINISTRADOR, RolNombre.ENCARGADO))
+]
+
+
+def _sucursal_permitida(session: SessionDep, user: Usuario) -> int | None:
+    """None = admin, puede ver cualquier sucursal. Un id = encargado,
+    forzado a la suya. Mismo patrón que inventario/reservas."""
+    rol = session.get(Rol, user.rol_id)
+    if rol is not None and rol.nombre == RolNombre.ENCARGADO:
+        if user.sucursal_id is None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Tu cuenta no está vinculada a ninguna sucursal. Contactá al administrador.",
+            )
+        return user.sucursal_id
+    return None
 
 
 @router.post("/checkout", response_model=VentaOut, status_code=status.HTTP_201_CREATED)
@@ -116,3 +134,27 @@ def procesar_pago_caja(  # CU25
 @router.get("/{venta_id}/comprobante", response_model=ComprobanteOut)
 def obtener_comprobante(venta_id: int, session: SessionDep, cajero: CajeroUser):  # CU26
     return service.emitir_comprobante(session, cajero, venta_id)
+
+
+# --------------------------------------------------------------------------- #
+#  CU36/CU37 — Consultar Ventas (Global para Admin, de la sucursal para Encargado)
+# --------------------------------------------------------------------------- #
+@router.get("/sucursal", response_model=VentaAdminPage)
+def listar_ventas_sucursal(
+    session: SessionDep,
+    user: AdminOEncargado,
+    sucursal_id: int | None = None,
+    estado: str | None = None,
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=20, ge=1, le=100),
+):
+    sucursal_permitida = _sucursal_permitida(session, user)
+    items, total = service.listar_ventas_sucursal(
+        session,
+        sucursal_id=sucursal_id,
+        estado=estado,
+        sucursal_permitida=sucursal_permitida,
+        page=page,
+        size=size,
+    )
+    return VentaAdminPage(items=items, total=total, page=page, size=size)
