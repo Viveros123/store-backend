@@ -6,6 +6,7 @@ from decimal import Decimal
 
 from sqlmodel import Session, func, select
 
+from app.modules.catalogo.models import Color, Talla
 from app.modules.ia import gemini_client
 from app.modules.inventario.models import Inventario
 from app.modules.productos.models import Producto, ProductoVariante
@@ -117,16 +118,43 @@ def recomendar_productos(session: Session, cliente_id: int) -> list[dict]:
     return salida
 
 
+def _tallas_y_colores_por_producto(
+    session: Session, producto_ids: list[int]
+) -> dict[int, dict[str, list[str]]]:
+    """Para que el chatbot pueda responder qué tallas/colores tiene cada
+    producto en vez de inventarlos (o negar que tiene la info)."""
+    if not producto_ids:
+        return {}
+    filas = session.exec(
+        select(ProductoVariante.producto_id, Talla.valor, Color.nombre)
+        .join(Talla, Talla.id == ProductoVariante.talla_id)
+        .join(Color, Color.id == ProductoVariante.color_id)
+        .where(ProductoVariante.producto_id.in_(producto_ids))
+    ).all()
+    agrupado: dict[int, dict[str, set[str]]] = {}
+    for producto_id, talla, color in filas:
+        grupo = agrupado.setdefault(producto_id, {"tallas": set(), "colores": set()})
+        grupo["tallas"].add(talla)
+        grupo["colores"].add(color)
+    return {
+        pid: {"tallas": sorted(g["tallas"]), "colores": sorted(g["colores"])}
+        for pid, g in agrupado.items()
+    }
+
+
 # --------------------------------------------------------------------------- #
 #  CU30 — Consultar Asistente Virtual (Chatbot)
 # --------------------------------------------------------------------------- #
 def chat_asistente(session: Session, mensaje: str, historial: list[dict]) -> dict:
     candidatos = _catalogo_para_ia(session, limite=40)
+    variantes = _tallas_y_colores_por_producto(session, [p.id for p in candidatos])
     lista_candidatos = [
         {
             "id": p.id,
             "nombre": p.nombre,
             "precio_base": float(p.precio_base),
+            "tallas_disponibles": variantes.get(p.id, {}).get("tallas", []),
+            "colores_disponibles": variantes.get(p.id, {}).get("colores", []),
         }
         for p in candidatos
     ]
@@ -147,7 +175,12 @@ def chat_asistente(session: Session, mensaje: str, historial: list[dict]) -> dic
         "breve, amable y en español. Respondé SIEMPRE con un JSON válido de la "
         'forma {"respuesta": "<texto para el cliente>", "producto_ids": [<ids '
         "del catálogo dado que mencionaste o recomendaste, puede ser vacío>]}. "
-        "Nunca inventes productos ni ids fuera del catálogo dado."
+        "El catálogo dado ya incluye, por cada producto, sus tallas y colores "
+        "REALES (tallas_disponibles / colores_disponibles) — usalos para "
+        "responder preguntas sobre talla o color. Nunca inventes productos, "
+        "ids, tallas, colores, precios ni ningún otro dato que no esté en el "
+        "catálogo dado: si te preguntan algo que no figura ahí, decilo "
+        "explícitamente en vez de adivinar."
     )
 
     try:
