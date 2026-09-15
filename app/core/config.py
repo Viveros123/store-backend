@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     # A dónde vuelve el cliente después de pagar en Stripe (el frontend Angular).
     frontend_url: str = "http://localhost:4200"
 
+    # Inteligencia artificial (Gemini) — CU29/CU30/CU32
+    gemini_api_key: str = ""
+
     @property
     def sqlalchemy_url(self) -> str:
         """SQLAlchemy necesita el driver explícito. Neon entrega 'postgresql://',
