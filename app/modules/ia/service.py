@@ -6,12 +6,17 @@ from decimal import Decimal
 
 from sqlmodel import Session, func, select
 
+from fastapi import HTTPException
+
 from app.modules.catalogo.models import Color, Talla
 from app.modules.ia import gemini_client
 from app.modules.inventario.models import Inventario
 from app.modules.productos.models import Producto, ProductoVariante
 from app.modules.productos.service import _catalogo_producto_out
+from app.modules.sucursales.models import Sucursal
+from app.modules.ventas import service as ventas_service
 from app.modules.ventas.models import EstadoVenta, Venta, VentaDetalle
+from app.modules.ventas.schemas import ItemCarritoCreate
 
 ESTADOS_PAGADOS = (EstadoVenta.PAGADA, EstadoVenta.COMPLETADA)
 
@@ -118,43 +123,66 @@ def recomendar_productos(session: Session, cliente_id: int) -> list[dict]:
     return salida
 
 
-def _tallas_y_colores_por_producto(
+def _variantes_por_producto(
     session: Session, producto_ids: list[int]
-) -> dict[int, dict[str, list[str]]]:
-    """Para que el chatbot pueda responder qué tallas/colores tiene cada
-    producto en vez de inventarlos (o negar que tiene la info)."""
+) -> dict[int, list[dict]]:
+    """Variantes reales (talla+color+id) de cada producto, con las sucursales
+    donde hay stock — así el chatbot puede responder qué talla/color tiene
+    cada prenda (en vez de inventarlo) y, si corresponde, agregar la
+    variante exacta al carrito en vez de adivinar un id."""
     if not producto_ids:
         return {}
     filas = session.exec(
-        select(ProductoVariante.producto_id, Talla.valor, Color.nombre)
+        select(
+            ProductoVariante.producto_id,
+            ProductoVariante.id,
+            Talla.valor,
+            Color.nombre,
+            Sucursal.nombre,
+            Inventario.cantidad_disponible,
+        )
         .join(Talla, Talla.id == ProductoVariante.talla_id)
         .join(Color, Color.id == ProductoVariante.color_id)
+        .outerjoin(Inventario, Inventario.variante_id == ProductoVariante.id)
+        .outerjoin(Sucursal, Sucursal.id == Inventario.sucursal_id)
         .where(ProductoVariante.producto_id.in_(producto_ids))
     ).all()
-    agrupado: dict[int, dict[str, set[str]]] = {}
-    for producto_id, talla, color in filas:
-        grupo = agrupado.setdefault(producto_id, {"tallas": set(), "colores": set()})
-        grupo["tallas"].add(talla)
-        grupo["colores"].add(color)
-    return {
-        pid: {"tallas": sorted(g["tallas"]), "colores": sorted(g["colores"])}
-        for pid, g in agrupado.items()
-    }
+
+    agrupado: dict[int, dict[int, dict]] = {}
+    for producto_id, variante_id, talla, color, sucursal_nombre, cantidad in filas:
+        variantes = agrupado.setdefault(producto_id, {})
+        variante = variantes.setdefault(
+            variante_id,
+            {
+                "id": variante_id,
+                "talla": talla,
+                "color": color,
+                "sucursales_con_stock": [],
+            },
+        )
+        if sucursal_nombre and cantidad and cantidad > 0:
+            if sucursal_nombre not in variante["sucursales_con_stock"]:
+                variante["sucursales_con_stock"].append(sucursal_nombre)
+
+    return {pid: list(vs.values()) for pid, vs in agrupado.items()}
 
 
 # --------------------------------------------------------------------------- #
 #  CU30 — Consultar Asistente Virtual (Chatbot)
 # --------------------------------------------------------------------------- #
-def chat_asistente(session: Session, mensaje: str, historial: list[dict]) -> dict:
+def chat_asistente(
+    session: Session, cliente_id: int, mensaje: str, historial: list[dict]
+) -> dict:
     candidatos = _catalogo_para_ia(session, limite=40)
-    variantes = _tallas_y_colores_por_producto(session, [p.id for p in candidatos])
+    variantes_por_producto = _variantes_por_producto(
+        session, [p.id for p in candidatos]
+    )
     lista_candidatos = [
         {
             "id": p.id,
             "nombre": p.nombre,
             "precio_base": float(p.precio_base),
-            "tallas_disponibles": variantes.get(p.id, {}).get("tallas", []),
-            "colores_disponibles": variantes.get(p.id, {}).get("colores", []),
+            "variantes": variantes_por_producto.get(p.id, []),
         }
         for p in candidatos
     ]
@@ -165,28 +193,41 @@ def chat_asistente(session: Session, mensaje: str, historial: list[dict]) -> dic
 
     prompt = (
         f"Historial reciente de la conversación:\n{historial_txt or '(sin historial)'}\n\n"
-        f"Catálogo disponible (JSON, para referenciar por id si corresponde): "
+        f"Catálogo disponible (JSON — cada producto trae sus variantes reales "
+        f"con id, talla, color y en qué sucursales hay stock ahora mismo): "
         f"{lista_candidatos}\n\n"
         f'Mensaje nuevo del cliente: "{mensaje}"'
     )
     instruccion = (
         "Sos el asistente virtual de FashionStore (tienda de ropa). Ayudás al "
-        "cliente a encontrar prendas, respondés dudas sobre el catálogo, y sos "
-        "breve, amable y en español. Respondé SIEMPRE con un JSON válido de la "
-        'forma {"respuesta": "<texto para el cliente>", "producto_ids": [<ids '
-        "del catálogo dado que mencionaste o recomendaste, puede ser vacío>]}. "
-        "El catálogo dado ya incluye, por cada producto, sus tallas y colores "
-        "REALES (tallas_disponibles / colores_disponibles) — usalos para "
-        "responder preguntas sobre talla o color. Nunca inventes productos, "
-        "ids, tallas, colores, precios ni ningún otro dato que no esté en el "
-        "catálogo dado: si te preguntan algo que no figura ahí, decilo "
-        "explícitamente en vez de adivinar."
+        "cliente a encontrar prendas, respondés dudas sobre el catálogo "
+        "(incluida disponibilidad por sucursal), y sos breve, amable y en "
+        "español. Nunca inventes productos, ids, tallas, colores, precios, "
+        "sucursales ni ningún otro dato que no esté en el catálogo dado: si "
+        "te preguntan algo que no figura ahí (ej. stock exacto en unidades, "
+        "reservas), decilo explícitamente en vez de adivinar.\n\n"
+        "Además podés AGREGAR PRENDAS AL CARRITO del cliente de verdad "
+        "(no es solo hablar). Hacelo solo cuando: (1) el cliente pidió "
+        "agregar/comprar algo y vos identificaste una única variante exacta "
+        "(id concreto) que tiene al menos una sucursal con stock, y (2) ya "
+        "tenés confirmación clara del cliente sobre qué talla y color quiere "
+        "(si hay más de una combinación posible y no lo especificó, primero "
+        "PREGUNTÁ cuál quiere en vez de elegir por él). Cuando corresponda "
+        "agregar, incluí el campo \"accion\". Si falta información o no "
+        "corresponde agregar nada, \"accion\" debe ser null.\n\n"
+        'Respondé SIEMPRE con un JSON válido de la forma {"respuesta": '
+        '"<texto para el cliente>", "producto_ids": [<ids del catálogo que '
+        'mencionaste, puede ser vacío>], "accion": null o {"tipo": '
+        '"agregar_carrito", "variante_id": <id de variante del catálogo '
+        'dado>, "cantidad": <entero, 1 si no se especificó>}}.'
     )
 
+    accion = None
     try:
         resultado = gemini_client.generar_json(prompt, instruccion)
         respuesta = str(resultado.get("respuesta", "")).strip()
         ids_mencionados = resultado.get("producto_ids", []) or []
+        accion = resultado.get("accion")
     except Exception:  # noqa: BLE001
         respuesta = (
             "No pude procesar tu consulta en este momento. Probá de nuevo en "
@@ -196,6 +237,26 @@ def chat_asistente(session: Session, mensaje: str, historial: list[dict]) -> dic
 
     if not respuesta:
         respuesta = "¿Podés reformular tu consulta? No estoy seguro de haber entendido."
+
+    carrito_actualizado = False
+    if isinstance(accion, dict) and accion.get("tipo") == "agregar_carrito":
+        variantes_validas = {
+            v["id"] for vs in variantes_por_producto.values() for v in vs
+        }
+        variante_id = accion.get("variante_id")
+        cantidad = accion.get("cantidad") or 1
+        if variante_id in variantes_validas:
+            try:
+                cantidad = max(1, min(int(cantidad), 20))
+                ventas_service.agregar_item(
+                    session,
+                    cliente_id,
+                    ItemCarritoCreate(variante_id=variante_id, cantidad=cantidad),
+                )
+                carrito_actualizado = True
+                respuesta += " ✅ Lo agregué a tu carrito."
+            except HTTPException as e:
+                respuesta += f" (No pude agregarlo: {e.detail})"
 
     ids_validos = {p.id for p in candidatos}
     por_id = {p.id: p for p in candidatos}
@@ -210,7 +271,11 @@ def chat_asistente(session: Session, mensaje: str, historial: list[dict]) -> dic
         if pid in ids_validos
     ][:6]
 
-    return {"respuesta": respuesta, "productos": productos}
+    return {
+        "respuesta": respuesta,
+        "productos": productos,
+        "carrito_actualizado": carrito_actualizado,
+    }
 
 
 # --------------------------------------------------------------------------- #

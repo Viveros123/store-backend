@@ -29,9 +29,9 @@ def recomendaciones(session: SessionDep, user: ClienteUser):  # CU29
 
 
 @router.post("/chat", response_model=ChatOut)
-def chat(data: ChatIn, session: SessionDep, _user: ClienteUser):  # CU30
+def chat(data: ChatIn, session: SessionDep, user: ClienteUser):  # CU30
     resultado = service.chat_asistente(
-        session, data.mensaje, [h.model_dump() for h in data.historial]
+        session, user.id, data.mensaje, [h.model_dump() for h in data.historial]
     )
     return ChatOut(**resultado)
 

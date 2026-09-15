@@ -42,7 +42,7 @@ def _llamar(
             _URL,
             params={"key": settings.gemini_api_key},
             json=body,
-            timeout=30.0,
+            timeout=60.0,
         )
     except httpx.HTTPError as e:
         raise HTTPException(

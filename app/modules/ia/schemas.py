@@ -46,6 +46,7 @@ class ProductoMencionadoOut(BaseModel):
 class ChatOut(BaseModel):
     respuesta: str
     productos: list[ProductoMencionadoOut] = []
+    carrito_actualizado: bool = False
 
 
 # --------------------------------------------------------------------------- #
