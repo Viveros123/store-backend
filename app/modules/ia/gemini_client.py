@@ -11,7 +11,10 @@ from fastapi import HTTPException, status
 
 from app.core.config import settings
 
-_MODELO = "gemini-3.6-flash"
+# "Flash Lite" en vez de "Flash" a secas: 500 solicitudes/día gratis contra
+# apenas 20/día de los modelos "Flash" completos (3.5/3.6/3.7/3.8) — con el
+# volumen de pruebas de un proyecto académico, 20/día se agota enseguida.
+_MODELO = "gemini-3.5-flash-lite"
 _URL = f"https://generativelanguage.googleapis.com/v1beta/models/{_MODELO}:generateContent"
 
 
@@ -30,12 +33,9 @@ def _llamar(
     body: dict = {
         "system_instruction": {"parts": [{"text": instruccion_sistema}]},
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        # thinkingBudget=0: respuestas rápidas y baratas — no necesitamos
-        # razonamiento extendido para recomendar prendas o redactar un texto corto.
-        "generationConfig": {"thinkingConfig": {"thinkingBudget": 0}},
     }
     if json_mode:
-        body["generationConfig"]["response_mime_type"] = "application/json"
+        body["generationConfig"] = {"response_mime_type": "application/json"}
 
     try:
         res = httpx.post(
