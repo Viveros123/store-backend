@@ -1,8 +1,8 @@
 """Lógica de negocio del módulo IA — CU29 (recomendador), CU30 (chatbot),
 CU32 (reporte por comando de voz). Usa Gemini vía `gemini_client`."""
 
-from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+import operator as _operator
+from datetime import date, datetime, timedelta, timezone
 
 from sqlmodel import Session, func, select
 
@@ -281,69 +281,271 @@ def chat_asistente(
 # --------------------------------------------------------------------------- #
 #  CU32 — Generar Reporte por Comando de Voz
 # --------------------------------------------------------------------------- #
-def _metricas_para_reporte(session: Session) -> dict:
-    ahora = datetime.now(timezone.utc)
-    hace_7d = ahora - timedelta(days=7)
-    hace_30d = ahora - timedelta(days=30)
+_COMPARADORES_STOCK = {
+    "menor_igual": _operator.le,
+    "mayor_igual": _operator.ge,
+    "igual": _operator.eq,
+    "menor": _operator.lt,
+    "mayor": _operator.gt,
+}
+_TOPE_VENTAS_DETALLE = 30
 
-    def _totales(desde: datetime) -> tuple[int, Decimal]:
-        fila = session.exec(
-            select(func.count(Venta.id), func.coalesce(func.sum(Venta.total), 0))
-            .where(Venta.estado.in_(ESTADOS_PAGADOS), Venta.fecha_creacion >= desde)
-        ).first()
-        return fila[0] or 0, fila[1] or Decimal("0")
 
-    cant_7d, total_7d = _totales(hace_7d)
-    cant_30d, total_30d = _totales(hace_30d)
+def _sucursales_activas(session: Session) -> list[Sucursal]:
+    return session.exec(select(Sucursal).where(Sucursal.activa == True)).all()  # noqa: E712
 
-    top_productos = session.exec(
-        select(
-            Producto.nombre,
-            func.sum(VentaDetalle.cantidad).label("unidades"),
+
+def _parsear_fecha(valor) -> date | None:
+    if not valor:
+        return None
+    try:
+        return date.fromisoformat(str(valor)[:10])
+    except ValueError:
+        return None
+
+
+def _extraer_intencion_reporte(texto_comando: str, sucursales: list[Sucursal]) -> dict:
+    """Paso 1: le pedimos a Gemini que traduzca el pedido de voz (libre, en
+    español) a filtros estructurados. No se ejecuta nada todavía — recién en
+    el paso 2 se valida esto contra datos reales y se corren las consultas."""
+    hoy = datetime.now(timezone.utc).date()
+    prompt = (
+        f"Hoy es {hoy.isoformat()}.\n"
+        f"Sucursales reales activas: {[s.nombre for s in sucursales]}\n"
+        f'Pedido del administrador (transcripción de voz): "{texto_comando}"'
+    )
+    instruccion = (
+        "Interpretá qué reporte de ventas/stock pide un administrador de una "
+        "tienda de ropa, y devolvé SOLO un JSON con esta forma exacta: "
+        '{"fecha_desde": "YYYY-MM-DD" o null, "fecha_hasta": "YYYY-MM-DD" o '
+        'null, "sucursal": "<nombre EXACTO de la lista de sucursales reales>" '
+        'o null, "comparar_sucursales": true/false, "incluir_detalle_ventas": '
+        'true/false, "stock_comparador": "menor_igual"|"mayor_igual"|"igual"|'
+        '"menor"|"mayor" o null, "stock_umbral": <entero> o null}.\n\n'
+        "Reglas: calculá fechas relativas (ej. 'últimas 2 semanas' = hace 14 "
+        "días hasta hoy, 'ayer', 'este mes') tomando como referencia la fecha "
+        "de hoy dada arriba. Si no mencionó ningún período dejá ambas fechas "
+        "en null. \"sucursal\" debe ser exactamente uno de los nombres reales "
+        "dados o null — nunca inventes un nombre que no esté en la lista. "
+        "\"comparar_sucursales\" es true si pidió comparar ventas entre "
+        "sucursales. \"incluir_detalle_ventas\" es true si pidió ver ventas "
+        "puntuales/exactas, no solo totales. \"stock_comparador\"/"
+        "\"stock_umbral\" solo si pidió stock comparado con un número exacto; "
+        "si no, dejalos null."
+    )
+    try:
+        resultado = gemini_client.generar_json(prompt, instruccion)
+        return resultado if isinstance(resultado, dict) else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _validar_intencion_reporte(intencion: dict, sucursales: list[Sucursal]) -> dict:
+    """Paso 2 (validación): nunca confiamos ciegamente en lo que devolvió la
+    IA — fechas inválidas caen a un rango por defecto, y una sucursal que no
+    coincide con ninguna real se descarta (y se avisa en vez de inventar)."""
+    hoy = datetime.now(timezone.utc).date()
+    desde = _parsear_fecha(intencion.get("fecha_desde")) or (hoy - timedelta(days=30))
+    hasta = _parsear_fecha(intencion.get("fecha_hasta")) or hoy
+    if desde > hasta:
+        desde, hasta = hasta, desde
+
+    por_nombre = {s.nombre.lower(): s for s in sucursales}
+    nombre_pedido = intencion.get("sucursal")
+    sucursal = por_nombre.get(str(nombre_pedido).lower()) if nombre_pedido else None
+
+    comparador = intencion.get("stock_comparador")
+    if comparador not in _COMPARADORES_STOCK:
+        comparador = None
+    try:
+        umbral = intencion.get("stock_umbral")
+        umbral = int(umbral) if umbral is not None else None
+    except (TypeError, ValueError):
+        umbral = None
+
+    return {
+        "fecha_desde": desde,
+        "fecha_hasta": hasta,
+        "sucursal": sucursal,
+        "sucursal_no_reconocida": nombre_pedido if nombre_pedido and sucursal is None else None,
+        "comparar_sucursales": bool(intencion.get("comparar_sucursales")),
+        "incluir_detalle_ventas": bool(intencion.get("incluir_detalle_ventas")),
+        "stock_comparador": comparador,
+        "stock_umbral": umbral,
+    }
+
+
+def _condiciones_ventas(desde: date, hasta: date, sucursal_id: int | None) -> list:
+    desde_dt = datetime.combine(desde, datetime.min.time(), tzinfo=timezone.utc)
+    hasta_dt = datetime.combine(hasta, datetime.max.time(), tzinfo=timezone.utc)
+    cond = [
+        Venta.estado.in_(ESTADOS_PAGADOS),
+        Venta.fecha_creacion >= desde_dt,
+        Venta.fecha_creacion <= hasta_dt,
+    ]
+    if sucursal_id is not None:
+        cond.append(Venta.sucursal_id == sucursal_id)
+    return cond
+
+
+def _ventas_totales_rango(
+    session: Session, desde: date, hasta: date, sucursal_id: int | None
+) -> tuple[int, float]:
+    fila = session.exec(
+        select(func.count(Venta.id), func.coalesce(func.sum(Venta.total), 0)).where(
+            *_condiciones_ventas(desde, hasta, sucursal_id)
         )
+    ).first()
+    return fila[0] or 0, float(fila[1] or 0)
+
+
+def _ventas_por_sucursal(session: Session, desde: date, hasta: date) -> list[dict]:
+    filas = session.exec(
+        select(
+            Sucursal.nombre,
+            func.count(Venta.id),
+            func.coalesce(func.sum(Venta.total), 0),
+        )
+        .select_from(Venta)
+        .join(Sucursal, Sucursal.id == Venta.sucursal_id)
+        .where(*_condiciones_ventas(desde, hasta, None))
+        .group_by(Sucursal.nombre)
+        .order_by(func.coalesce(func.sum(Venta.total), 0).desc())
+    ).all()
+    return [
+        {"sucursal": nombre, "cantidad_ventas": cant, "total_bs": float(total)}
+        for nombre, cant, total in filas
+    ]
+
+
+def _top_productos_rango(
+    session: Session, desde: date, hasta: date, sucursal_id: int | None, limite: int = 5
+) -> list[dict]:
+    filas = session.exec(
+        select(Producto.nombre, func.sum(VentaDetalle.cantidad))
         .select_from(VentaDetalle)
         .join(Venta, Venta.id == VentaDetalle.venta_id)
         .join(ProductoVariante, ProductoVariante.id == VentaDetalle.variante_id)
         .join(Producto, Producto.id == ProductoVariante.producto_id)
-        .where(Venta.estado.in_(ESTADOS_PAGADOS), Venta.fecha_creacion >= hace_30d)
+        .where(*_condiciones_ventas(desde, hasta, sucursal_id))
         .group_by(Producto.nombre)
         .order_by(func.sum(VentaDetalle.cantidad).desc())
-        .limit(5)
+        .limit(limite)
     ).all()
+    return [{"nombre": n, "unidades": int(u)} for n, u in filas]
 
-    UMBRAL_STOCK_BAJO = 3
-    stock_bajo = session.exec(
-        select(func.count(Inventario.id)).where(
-            Inventario.cantidad_disponible <= UMBRAL_STOCK_BAJO
+
+def _detalle_ventas_rango(
+    session: Session, desde: date, hasta: date, sucursal_id: int | None
+) -> list[dict]:
+    filas = session.exec(
+        select(Venta.id, Venta.fecha_creacion, Venta.total, Sucursal.nombre)
+        .select_from(Venta)
+        .join(Sucursal, Sucursal.id == Venta.sucursal_id)
+        .where(*_condiciones_ventas(desde, hasta, sucursal_id))
+        .order_by(Venta.fecha_creacion.desc())
+        .limit(_TOPE_VENTAS_DETALLE)
+    ).all()
+    return [
+        {
+            "venta_id": vid,
+            "fecha": fecha.date().isoformat(),
+            "total_bs": float(total),
+            "sucursal": sucursal_nombre,
+        }
+        for vid, fecha, total, sucursal_nombre in filas
+    ]
+
+
+def _stock_consultado(session: Session, comparador: str | None, umbral: int | None) -> dict:
+    comparador = comparador or "menor_igual"
+    umbral = 3 if umbral is None else umbral
+    op = _COMPARADORES_STOCK[comparador]
+    filas = session.exec(
+        select(
+            Producto.nombre,
+            Talla.valor,
+            Color.nombre,
+            Sucursal.nombre,
+            Inventario.cantidad_disponible,
         )
-    ).first()
-
+        .select_from(Inventario)
+        .join(ProductoVariante, ProductoVariante.id == Inventario.variante_id)
+        .join(Producto, Producto.id == ProductoVariante.producto_id)
+        .join(Talla, Talla.id == ProductoVariante.talla_id)
+        .join(Color, Color.id == ProductoVariante.color_id)
+        .join(Sucursal, Sucursal.id == Inventario.sucursal_id)
+        .where(op(Inventario.cantidad_disponible, umbral), Sucursal.activa == True)  # noqa: E712
+        .order_by(Inventario.cantidad_disponible.asc())
+        .limit(30)
+    ).all()
     return {
-        "ventas_ultimos_7_dias": {"cantidad": cant_7d, "total_bs": float(total_7d)},
-        "ventas_ultimos_30_dias": {"cantidad": cant_30d, "total_bs": float(total_30d)},
-        "productos_mas_vendidos_30_dias": [
-            {"nombre": n, "unidades": int(u)} for n, u in top_productos
+        "comparador": comparador,
+        "umbral": umbral,
+        "items": [
+            {
+                "producto": nombre,
+                "talla": talla,
+                "color": color,
+                "sucursal": sucursal_nombre,
+                "stock": cantidad,
+            }
+            for nombre, talla, color, sucursal_nombre, cantidad in filas
         ],
-        "variantes_con_stock_bajo": stock_bajo or 0,
-        "umbral_stock_bajo": UMBRAL_STOCK_BAJO,
     }
 
 
 def generar_reporte_voz(session: Session, texto_comando: str) -> str:
-    metricas = _metricas_para_reporte(session)
+    sucursales = _sucursales_activas(session)
+
+    intencion_ia = _extraer_intencion_reporte(texto_comando, sucursales)
+    filtros = _validar_intencion_reporte(intencion_ia, sucursales)
+
+    desde, hasta = filtros["fecha_desde"], filtros["fecha_hasta"]
+    sucursal = filtros["sucursal"]
+    sucursal_id = sucursal.id if sucursal else None
+
+    cantidad, total_bs = _ventas_totales_rango(session, desde, hasta, sucursal_id)
+    metricas: dict = {
+        "periodo_interpretado": f"{desde.isoformat()} a {hasta.isoformat()}",
+        "sucursal_filtrada": sucursal.nombre if sucursal else "todas",
+        "ventas_en_periodo": {"cantidad": cantidad, "total_bs": total_bs},
+        "productos_mas_vendidos_en_periodo": _top_productos_rango(
+            session, desde, hasta, sucursal_id
+        ),
+    }
+    if filtros["sucursal_no_reconocida"]:
+        metricas["aviso"] = (
+            f'El administrador mencionó una sucursal ("{filtros["sucursal_no_reconocida"]}") '
+            "que no coincide con ninguna sucursal real activa; se muestran datos de todas."
+        )
+    if filtros["comparar_sucursales"]:
+        metricas["ventas_por_sucursal_en_periodo"] = _ventas_por_sucursal(session, desde, hasta)
+    if filtros["incluir_detalle_ventas"]:
+        detalle = _detalle_ventas_rango(session, desde, hasta, sucursal_id)
+        metricas["ventas_detalle"] = detalle
+        metricas["ventas_detalle_truncado"] = cantidad > len(detalle)
+    metricas["stock_consultado"] = _stock_consultado(
+        session, filtros["stock_comparador"], filtros["stock_umbral"]
+    )
 
     prompt = (
-        f"Pedido del administrador (transcripción de voz): \"{texto_comando}\"\n\n"
+        f'Pedido del administrador (transcripción de voz): "{texto_comando}"\n\n'
         f"Datos reales disponibles del sistema (JSON), son los únicos datos "
         f"que existen — no hay más información que esta: {metricas}"
     )
     instruccion = (
         "Sos el generador de reportes de FashionStore. Redactá un reporte breve "
-        "en español, en 3-6 líneas, dirigido a un administrador, usando "
-        "EXCLUSIVAMENTE los datos numéricos provistos (nunca inventes cifras "
-        "que no estén en los datos). Si el pedido del administrador pide algo "
-        "que no está en los datos disponibles, decilo explícitamente en vez de "
-        "inventarlo. No respondas en JSON, solo el texto del reporte."
+        "en español, dirigido a un administrador, usando EXCLUSIVAMENTE los "
+        "datos provistos (nunca inventes cifras, sucursales ni productos que no "
+        "estén ahí). SIEMPRE mencioná al inicio qué período de fechas y qué "
+        "sucursal se usó para armar el reporte (periodo_interpretado / "
+        "sucursal_filtrada), así el administrador puede confirmar que se "
+        "entendió bien su pedido. Si hay un campo 'aviso', comunicalo. Si "
+        "ventas_detalle_truncado es true, aclará que se muestran solo las "
+        "últimas 30 ventas del período y que hay más. Si el pedido pide algo "
+        "que no está en los datos, decilo explícitamente en vez de inventarlo. "
+        "No respondas en JSON, solo el texto del reporte."
     )
     try:
         return gemini_client.generar_texto(prompt, instruccion)
