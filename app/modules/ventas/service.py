@@ -432,7 +432,9 @@ def consultar_estado_pago(session: Session, cliente_id: int, venta_id: int) -> d
             ultimo_pago.estado = EstadoPago.APROBADO
             ultimo_pago.fecha_actualizacion = datetime.now(timezone.utc)
             session.add(ultimo_pago)
-            venta.estado = EstadoVenta.PAGADA
+            # El despacho ocurre fuera del sistema (no hay actor de delivery):
+            # pagar online ya completa la venta, igual que en caja.
+            venta.estado = EstadoVenta.COMPLETADA
             session.add(venta)
             session.commit()
         elif stripe_session.status == "expired":

@@ -68,7 +68,7 @@ class Venta(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     cliente_id: int = Field(foreign_key="usuario.id")
-    sucursal_id: int = Field(foreign_key="sucursal.id")  # dónde se retira
+    sucursal_id: int = Field(foreign_key="sucursal.id")  # sucursal que despacha
     cajero_id: int | None = Field(default=None, foreign_key="usuario.id")  # CU24, null = compra web
 
     estado: str = Field(default=EstadoVenta.PENDIENTE_PAGO, max_length=20)

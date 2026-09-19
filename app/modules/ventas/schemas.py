@@ -42,7 +42,7 @@ class CarritoOut(BaseModel):
 #  CU22 — Comprar desde Plataforma Web
 # --------------------------------------------------------------------------- #
 class CheckoutCreate(BaseModel):
-    sucursal_id: int = Field(description="Sucursal donde el cliente retira la compra")
+    sucursal_id: int = Field(description="Sucursal desde la que se despacha la compra")
 
 
 class ItemVentaOut(BaseModel):
