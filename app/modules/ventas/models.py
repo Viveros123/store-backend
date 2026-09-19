@@ -68,8 +68,16 @@ class Venta(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     cliente_id: int = Field(foreign_key="usuario.id")
-    sucursal_id: int = Field(foreign_key="sucursal.id")  # sucursal que despacha
+    # Sucursal principal de despacho (la que aporta más monto de la venta).
+    # Si la compra sale de varias sucursales, cada línea guarda la suya en
+    # `VentaDetalle.sucursal_id`.
+    sucursal_id: int = Field(foreign_key="sucursal.id")
     cajero_id: int | None = Field(default=None, foreign_key="usuario.id")  # CU24, null = compra web
+
+    # Solo compras en línea: a dónde se envía. El delivery en sí ocurre fuera
+    # del sistema. Ventas en caja y ventas antiguas quedan en NULL.
+    direccion_entrega: str | None = Field(default=None, max_length=200)
+    referencia_entrega: str | None = Field(default=None, max_length=150)
 
     estado: str = Field(default=EstadoVenta.PENDIENTE_PAGO, max_length=20)
     total: Decimal = Field(max_digits=10, decimal_places=2)
@@ -84,6 +92,8 @@ class VentaDetalle(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     venta_id: int = Field(foreign_key="venta.id")
     variante_id: int = Field(foreign_key="producto_variante.id")
+    # Sucursal de la que sale (y a la que se le descontó) esta línea.
+    sucursal_id: int | None = Field(default=None, foreign_key="sucursal.id")
     cantidad: int = Field(gt=0)
     # Foto del precio/costo al momento de la venta (para reportes exactos
     # aunque después cambien los precios o el costo promedio).

@@ -44,7 +44,8 @@ class CarritoOut(BaseModel):
 #  CU22 — Comprar desde Plataforma Web
 # --------------------------------------------------------------------------- #
 class CheckoutCreate(BaseModel):
-    sucursal_id: int = Field(description="Sucursal desde la que se despacha la compra")
+    direccion_entrega: str = Field(min_length=5, max_length=200)
+    referencia_entrega: str | None = Field(default=None, max_length=150)
 
 
 class ItemVentaOut(BaseModel):
@@ -59,13 +60,19 @@ class ItemVentaOut(BaseModel):
     precio_unitario: Decimal
     precio_original: Decimal | None = None
     subtotal: Decimal
+    sucursal: str | None = None  # sucursal de la que sale esta línea
 
 
 class VentaOut(BaseModel):
     id: int
     sucursal_id: int
+    # Con una sola sucursal: su nombre y ciudad. Si la compra sale de varias:
+    # "Varias sucursales" y `varias_sucursales = True`.
     sucursal: str | None
     ciudad: str | None
+    varias_sucursales: bool = False
+    direccion_entrega: str | None = None
+    referencia_entrega: str | None = None
     estado: str
     total: Decimal
     fecha_creacion: datetime

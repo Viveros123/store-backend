@@ -211,16 +211,23 @@ def vaciar_carrito(session: Session, cliente_id: int) -> dict:
 #  CU22 — Comprar desde Plataforma Web
 # --------------------------------------------------------------------------- #
 def _venta_out(session: Session, venta: Venta) -> dict:
-    sucursal = session.get(Sucursal, venta.sucursal_id)
     detalles = session.exec(
         select(VentaDetalle).where(VentaDetalle.venta_id == venta.id)
     ).all()
+    sucursales: dict[int, Sucursal | None] = {}
+
+    def _sucursal(sucursal_id: int) -> Sucursal | None:
+        if sucursal_id not in sucursales:
+            sucursales[sucursal_id] = session.get(Sucursal, sucursal_id)
+        return sucursales[sucursal_id]
+
     items = []
     for d in detalles:
         variante = session.get(ProductoVariante, d.variante_id)
         producto = session.get(Producto, variante.producto_id) if variante else None
         talla = session.get(Talla, variante.talla_id) if variante else None
         color = session.get(Color, variante.color_id) if variante else None
+        origen = _sucursal(d.sucursal_id or venta.sucursal_id)
         items.append(
             {
                 "id": d.id,
@@ -236,13 +243,21 @@ def _venta_out(session: Session, venta: Venta) -> dict:
                 if d.precio_original is not None
                 else d.precio_unitario,
                 "subtotal": d.precio_unitario * d.cantidad,
+                "sucursal": origen.nombre if origen else None,
             }
         )
+    varias = len({d.sucursal_id or venta.sucursal_id for d in detalles}) > 1
+    principal = _sucursal(venta.sucursal_id)
     return {
         "id": venta.id,
         "sucursal_id": venta.sucursal_id,
-        "sucursal": sucursal.nombre if sucursal else None,
-        "ciudad": sucursal.ciudad if sucursal else None,
+        "sucursal": "Varias sucursales"
+        if varias
+        else (principal.nombre if principal else None),
+        "ciudad": None if varias else (principal.ciudad if principal else None),
+        "varias_sucursales": varias,
+        "direccion_entrega": venta.direccion_entrega,
+        "referencia_entrega": venta.referencia_entrega,
         "estado": venta.estado,
         "total": venta.total,
         "fecha_creacion": venta.fecha_creacion,
@@ -257,10 +272,77 @@ def _venta_del_cliente(session: Session, venta_id: int, cliente_id: int) -> Vent
     return venta
 
 
+def _inventarios_con_stock(session: Session, variante_id: int) -> list[Inventario]:
+    return session.exec(
+        select(Inventario)
+        .join(Sucursal, Sucursal.id == Inventario.sucursal_id)  # type: ignore[arg-type]
+        .where(
+            Inventario.variante_id == variante_id,
+            Sucursal.activa == True,  # noqa: E712
+            Inventario.cantidad_disponible > 0,
+        )
+        .order_by(Inventario.sucursal_id)
+    ).all()
+
+
+def _asignar_despacho(
+    session: Session, pedidos: list[tuple[ProductoVariante, Producto, int]]
+) -> list[tuple[ProductoVariante, int, Inventario]]:
+    """Decide de qué sucursal(es) sale cada prenda de una compra en línea.
+
+    1) Si una sola sucursal puede cubrir todo el pedido, sale todo de ahí.
+    2) Si no, se reparte: cada prenda se toma de las sucursales ya usadas
+       primero (para no abrir envíos de más) y luego de la que más stock
+       tenga; una misma prenda puede salir de dos sucursales si hace falta.
+    """
+    inventarios = {v.id: _inventarios_con_stock(session, v.id) for v, _, _ in pedidos}
+
+    completas: set[int] | None = None
+    for variante, _, cantidad in pedidos:
+        cubren = {
+            i.sucursal_id
+            for i in inventarios[variante.id]
+            if i.cantidad_disponible >= cantidad
+        }
+        completas = cubren if completas is None else completas & cubren
+    if completas:
+        elegida = min(completas)
+        return [
+            (
+                variante,
+                cantidad,
+                next(i for i in inventarios[variante.id] if i.sucursal_id == elegida),
+            )
+            for variante, _, cantidad in pedidos
+        ]
+
+    usadas: set[int] = set()
+    asignacion: list[tuple[ProductoVariante, int, Inventario]] = []
+    for variante, producto, cantidad in pedidos:
+        restante = cantidad
+        candidatos = sorted(
+            inventarios[variante.id],
+            key=lambda i: (i.sucursal_id not in usadas, -i.cantidad_disponible, i.sucursal_id),
+        )
+        for inv in candidatos:
+            if restante == 0:
+                break
+            tomar = min(restante, inv.cantidad_disponible)
+            asignacion.append((variante, tomar, inv))
+            usadas.add(inv.sucursal_id)
+            restante -= tomar
+        if restante > 0:
+            raise HTTPException(
+                422,
+                f"No hay stock suficiente de '{producto.nombre}'. Ajustá la cantidad.",
+            )
+    return asignacion
+
+
 def crear_checkout(session: Session, cliente_id: int, data: CheckoutCreate) -> dict:
-    sucursal = session.get(Sucursal, data.sucursal_id)
-    if sucursal is None or not sucursal.activa:
-        raise HTTPException(422, "Esa sucursal no es válida")
+    direccion = data.direccion_entrega.strip()
+    if len(direccion) < 5:
+        raise HTTPException(422, "Ingresá una dirección de entrega válida")
 
     carrito = _get_o_crear_carrito(session, cliente_id)
     detalles_carrito = session.exec(
@@ -269,7 +351,7 @@ def crear_checkout(session: Session, cliente_id: int, data: CheckoutCreate) -> d
     if not detalles_carrito:
         raise HTTPException(422, "Tu carrito está vacío")
 
-    lineas = []
+    pedidos = []
     for d in detalles_carrito:
         variante = session.get(ProductoVariante, d.variante_id)
         if variante is None:
@@ -280,24 +362,30 @@ def crear_checkout(session: Session, cliente_id: int, data: CheckoutCreate) -> d
                 422,
                 f"'{producto.nombre if producto else variante.sku}' ya no está disponible",
             )
-        inv = session.exec(
-            select(Inventario).where(
-                Inventario.variante_id == d.variante_id,
-                Inventario.sucursal_id == data.sucursal_id,
-            )
-        ).first()
-        if inv is None or inv.cantidad_disponible < d.cantidad:
-            raise HTTPException(
-                422,
-                f"No hay stock suficiente de '{producto.nombre}' en esa sucursal. "
-                "Probá con otra sucursal o ajustá la cantidad.",
-            )
-        original, precio, promocion_id = _precio_venta(session, variante, producto)
-        lineas.append((variante, d.cantidad, precio, inv, original, promocion_id))
+        pedidos.append((variante, producto, d.cantidad))
+
+    precios = {v.id: _precio_venta(session, v, p) for v, p, _ in pedidos}
+    lineas = []
+    for variante, cantidad, inv in _asignar_despacho(session, pedidos):
+        original, precio, promocion_id = precios[variante.id]
+        lineas.append((variante, cantidad, precio, inv, original, promocion_id))
 
     total = sum(precio * cantidad for _, cantidad, precio, *_ in lineas)
 
-    venta = Venta(cliente_id=cliente_id, sucursal_id=data.sucursal_id, total=total)
+    monto_por_sucursal: dict[int, Decimal] = {}
+    for _, cantidad, precio, inv, *_ in lineas:
+        monto_por_sucursal[inv.sucursal_id] = (
+            monto_por_sucursal.get(inv.sucursal_id, Decimal(0)) + precio * cantidad
+        )
+    sucursal_principal = max(monto_por_sucursal, key=lambda s: monto_por_sucursal[s])
+
+    venta = Venta(
+        cliente_id=cliente_id,
+        sucursal_id=sucursal_principal,
+        total=total,
+        direccion_entrega=direccion,
+        referencia_entrega=(data.referencia_entrega or "").strip() or None,
+    )
     session.add(venta)
     session.flush()  # necesitamos venta.id para el detalle
 
@@ -306,6 +394,7 @@ def crear_checkout(session: Session, cliente_id: int, data: CheckoutCreate) -> d
             VentaDetalle(
                 venta_id=venta.id,
                 variante_id=variante.id,
+                sucursal_id=inv.sucursal_id,
                 cantidad=cantidad,
                 precio_unitario=precio,
                 precio_original=original,
@@ -318,7 +407,7 @@ def crear_checkout(session: Session, cliente_id: int, data: CheckoutCreate) -> d
         session.add(
             MovimientoInventario(
                 variante_id=variante.id,
-                sucursal_id=data.sucursal_id,
+                sucursal_id=inv.sucursal_id,
                 usuario_id=cliente_id,
                 tipo=TipoMovimiento.SALIDA_VENTA,
                 cantidad=cantidad,
@@ -357,10 +446,11 @@ def cancelar_venta(session: Session, cliente_id: int, venta_id: int) -> dict:
         select(VentaDetalle).where(VentaDetalle.venta_id == venta.id)
     ).all()
     for d in detalles:
+        origen_id = d.sucursal_id or venta.sucursal_id
         inv = session.exec(
             select(Inventario).where(
                 Inventario.variante_id == d.variante_id,
-                Inventario.sucursal_id == venta.sucursal_id,
+                Inventario.sucursal_id == origen_id,
             )
         ).first()
         if inv is not None:
@@ -369,7 +459,7 @@ def cancelar_venta(session: Session, cliente_id: int, venta_id: int) -> dict:
         session.add(
             MovimientoInventario(
                 variante_id=d.variante_id,
-                sucursal_id=venta.sucursal_id,
+                sucursal_id=origen_id,
                 usuario_id=cliente_id,
                 tipo=TipoMovimiento.ANULACION_VENTA,
                 cantidad=d.cantidad,
@@ -578,6 +668,7 @@ def crear_venta_presencial(
             VentaDetalle(
                 venta_id=venta.id,
                 variante_id=variante.id,
+                sucursal_id=sucursal_id,
                 cantidad=cantidad,
                 precio_unitario=precio,
                 precio_original=original,
@@ -724,11 +815,20 @@ def listar_ventas_sucursal(
 ) -> tuple[list[dict], int]:
     """sucursal_permitida viene del router: None = admin (puede filtrar por
     cualquier sucursal o ver todas), un id = encargado (forzado a la suya)."""
+    def _sale_de(sucursal: int):
+        # Una compra en línea puede salir de varias sucursales: cada una la ve.
+        return or_(
+            Venta.sucursal_id == sucursal,
+            Venta.id.in_(
+                select(VentaDetalle.venta_id).where(VentaDetalle.sucursal_id == sucursal)
+            ),
+        )
+
     base = select(Venta)
     if sucursal_permitida is not None:
-        base = base.where(Venta.sucursal_id == sucursal_permitida)
+        base = base.where(_sale_de(sucursal_permitida))
     elif sucursal_id is not None:
-        base = base.where(Venta.sucursal_id == sucursal_id)
+        base = base.where(_sale_de(sucursal_id))
     if estado:
         base = base.where(Venta.estado == estado)
 
