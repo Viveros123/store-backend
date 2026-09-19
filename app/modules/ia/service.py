@@ -10,6 +10,13 @@ from fastapi import HTTPException
 
 from app.modules.catalogo.models import Color, Talla
 from app.modules.ia import gemini_client
+from app.modules.ia.models import (
+    FormatoSolicitud,
+    HistorialInteraccion,
+    ReporteGenerado,
+    TipoInteraccion,
+    TipoReporte,
+)
 from app.modules.inventario.models import Inventario
 from app.modules.productos.models import Producto, ProductoVariante
 from app.modules.productos.service import _catalogo_producto_out
@@ -271,6 +278,17 @@ def chat_asistente(
         if pid in ids_validos
     ][:6]
 
+    session.add(
+        HistorialInteraccion(
+            cliente_id=cliente_id,
+            tipo=TipoInteraccion.CHATBOT,
+            producto_id=productos[0]["id"] if productos else None,
+            consulta=mensaje,
+            respuesta=respuesta,
+        )
+    )
+    session.commit()
+
     return {
         "respuesta": respuesta,
         "productos": productos,
@@ -495,7 +513,7 @@ def _stock_consultado(session: Session, comparador: str | None, umbral: int | No
     }
 
 
-def generar_reporte_voz(session: Session, texto_comando: str) -> str:
+def generar_reporte_voz(session: Session, usuario_id: int, texto_comando: str) -> str:
     sucursales = _sucursales_activas(session)
 
     intencion_ia = _extraer_intencion_reporte(texto_comando, sucursales)
@@ -548,9 +566,29 @@ def generar_reporte_voz(session: Session, texto_comando: str) -> str:
         "No respondas en JSON, solo el texto del reporte."
     )
     try:
-        return gemini_client.generar_texto(prompt, instruccion)
+        reporte = gemini_client.generar_texto(prompt, instruccion)
     except Exception:  # noqa: BLE001
-        return (
+        reporte = (
             "No se pudo generar el reporte con IA en este momento. Datos "
             f"disponibles: {metricas}"
         )
+
+    session.add(
+        ReporteGenerado(
+            usuario_id=usuario_id,
+            tipo_reporte=TipoReporte.GENERAL,
+            formato_solicitud=FormatoSolicitud.VOZ,
+            parametros={
+                "comando": texto_comando,
+                "fecha_desde": desde.isoformat(),
+                "fecha_hasta": hasta.isoformat(),
+                "sucursal": sucursal.nombre if sucursal else None,
+                "comparar_sucursales": filtros["comparar_sucursales"],
+                "incluir_detalle_ventas": filtros["incluir_detalle_ventas"],
+                "stock_comparador": filtros["stock_comparador"],
+                "stock_umbral": filtros["stock_umbral"],
+            },
+        )
+    )
+    session.commit()
+    return reporte

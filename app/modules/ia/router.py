@@ -37,6 +37,6 @@ def chat(data: ChatIn, session: SessionDep, user: ClienteUser):  # CU30
 
 
 @router.post("/reportes/voz", response_model=ReporteVozOut)
-def reporte_por_voz(data: ReporteVozIn, session: SessionDep, _user: AdminUser):  # CU32
-    reporte = service.generar_reporte_voz(session, data.texto)
+def reporte_por_voz(data: ReporteVozIn, session: SessionDep, user: AdminUser):  # CU32
+    reporte = service.generar_reporte_voz(session, user.id, data.texto)
     return ReporteVozOut(consulta=data.texto, reporte=reporte)
