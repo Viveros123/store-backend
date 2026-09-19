@@ -20,6 +20,7 @@ from app.modules.ia.models import (
 from app.modules.inventario.models import Inventario
 from app.modules.productos.models import Producto, ProductoVariante
 from app.modules.productos.service import _catalogo_producto_out
+from app.modules.promociones import service as promociones_service
 from app.modules.sucursales.models import Sucursal
 from app.modules.ventas import service as ventas_service
 from app.modules.ventas.models import EstadoVenta, Venta, VentaDetalle
@@ -123,6 +124,7 @@ def recomendar_productos(session: Session, cliente_id: int) -> list[dict]:
                 "categoria": base["categoria"],
                 "temporada": base["temporada"],
                 "precio_base": base["precio_base"],
+                "precio_promocional": base["precio_promocional"],
                 "imagen_url": base["imagen_url"],
                 "motivo": it.get("motivo", "Recomendado para vos"),
             }
@@ -184,11 +186,28 @@ def chat_asistente(
     variantes_por_producto = _variantes_por_producto(
         session, [p.id for p in candidatos]
     )
+    promos_por_producto = promociones_service.promos_vigentes_por_producto(
+        session, [p.id for p in candidatos]
+    )
+    precios_promo: dict[int, tuple] = {}
+    for p in candidatos:
+        final, promo = promociones_service.mejor_precio(
+            p.precio_base, promos_por_producto.get(p.id, [])
+        )
+        if promo:
+            precios_promo[p.id] = (final, promo)
+
     lista_candidatos = [
         {
             "id": p.id,
             "nombre": p.nombre,
             "precio_base": float(p.precio_base),
+            "promocion": {
+                "nombre": precios_promo[p.id][1].nombre,
+                "precio_con_descuento": float(precios_promo[p.id][0]),
+            }
+            if p.id in precios_promo
+            else None,
             "variantes": variantes_por_producto.get(p.id, []),
         }
         for p in candidatos
@@ -212,7 +231,11 @@ def chat_asistente(
         "español. Nunca inventes productos, ids, tallas, colores, precios, "
         "sucursales ni ningún otro dato que no esté en el catálogo dado: si "
         "te preguntan algo que no figura ahí (ej. stock exacto en unidades, "
-        "reservas), decilo explícitamente en vez de adivinar.\n\n"
+        "reservas), decilo explícitamente en vez de adivinar. Si un producto "
+        "tiene \"promocion\", ese es el precio que realmente se cobra: "
+        "mencioná el precio con descuento y el nombre de la promoción. Los "
+        "precios están en bolivianos: escribilos como \"Bs 75.00\", nunca "
+        "con el signo $.\n\n"
         "Además podés AGREGAR PRENDAS AL CARRITO del cliente de verdad "
         "(no es solo hablar). Hacelo solo cuando: (1) el cliente pidió "
         "agregar/comprar algo y vos identificaste una única variante exacta "
@@ -272,6 +295,7 @@ def chat_asistente(
             "id": pid,
             "nombre": por_id[pid].nombre,
             "precio_base": por_id[pid].precio_base,
+            "precio_promocional": precios_promo[pid][0] if pid in precios_promo else None,
             "imagen_url": por_id[pid].imagen_url,
         }
         for pid in ids_mencionados

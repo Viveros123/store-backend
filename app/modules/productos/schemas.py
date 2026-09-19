@@ -125,6 +125,9 @@ class CatalogoProductoOut(BaseModel):
     coleccion: str | None
     temporada: str | None
     precio_base: Decimal
+    # CU33: precio con la mejor promoción vigente (None si no hay ninguna).
+    precio_promocional: Decimal | None = None
+    promocion: str | None = None
     imagen_url: str | None
     colores: list[ColorMini] = []
     cantidad_variantes: int = 0
@@ -138,6 +141,7 @@ class CatalogoVarianteOut(BaseModel):
     color: str | None
     color_hex: str | None
     precio_efectivo: Decimal
+    precio_promocional: Decimal | None = None
     imagen_efectivo: str | None = None
 
 

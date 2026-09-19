@@ -14,6 +14,8 @@ from app.modules.identidad.models import Rol, RolNombre, Usuario
 from app.modules.identidad.schemas import ClienteRegistroIn
 from app.modules.inventario.models import Inventario, MovimientoInventario, TipoMovimiento
 from app.modules.productos.models import Producto, ProductoVariante
+from app.modules.promociones import service as promociones_service
+from app.modules.promociones.models import Promocion
 from app.modules.sucursales.models import Sucursal
 from app.modules.ventas import stripe_client
 from app.modules.ventas.models import (
@@ -60,6 +62,18 @@ def _hay_stock(session: Session, variante_id: int) -> bool:
     return total > 0
 
 
+def _precio_venta(
+    session: Session, variante: ProductoVariante, producto: Producto
+) -> tuple[Decimal, Decimal, int | None]:
+    """(precio original, precio final con la mejor promoción vigente, id de
+    la promoción aplicada o None) — CU33."""
+    original = variante.precio if variante.precio is not None else producto.precio_base
+    final, promo = promociones_service.mejor_precio(
+        original, promociones_service.promos_de_producto(session, producto.id)
+    )
+    return original, final, promo.id if promo else None
+
+
 def _item_out(session: Session, d: CarritoDetalle) -> dict:
     variante = session.get(ProductoVariante, d.variante_id)
     producto = session.get(Producto, variante.producto_id) if variante else None
@@ -67,12 +81,12 @@ def _item_out(session: Session, d: CarritoDetalle) -> dict:
     color = session.get(Color, variante.color_id) if variante else None
 
     precio = None
-    if variante is not None:
-        precio = (
-            variante.precio
-            if variante.precio is not None
-            else (producto.precio_base if producto else None)
-        )
+    precio_original = None
+    promocion = None
+    if variante is not None and producto is not None and producto.precio_base is not None:
+        precio_original, precio, promocion_id = _precio_venta(session, variante, producto)
+        if promocion_id is not None:
+            promocion = session.get(Promocion, promocion_id).nombre
     subtotal = precio * d.cantidad if precio is not None else None
 
     return {
@@ -86,6 +100,8 @@ def _item_out(session: Session, d: CarritoDetalle) -> dict:
         "imagen_efectivo": (variante.imagen_url if variante else None)
         or (producto.imagen_url if producto else None),
         "precio_unitario": precio,
+        "precio_original": precio_original,
+        "promocion": promocion,
         "cantidad": d.cantidad,
         "subtotal": subtotal,
         "disponible": _hay_stock(session, d.variante_id) if variante else False,
@@ -216,6 +232,9 @@ def _venta_out(session: Session, venta: Venta) -> dict:
                 "sku": variante.sku if variante else None,
                 "cantidad": d.cantidad,
                 "precio_unitario": d.precio_unitario,
+                "precio_original": d.precio_original
+                if d.precio_original is not None
+                else d.precio_unitario,
                 "subtotal": d.precio_unitario * d.cantidad,
             }
         )
@@ -273,22 +292,24 @@ def crear_checkout(session: Session, cliente_id: int, data: CheckoutCreate) -> d
                 f"No hay stock suficiente de '{producto.nombre}' en esa sucursal. "
                 "Probá con otra sucursal o ajustá la cantidad.",
             )
-        precio = variante.precio if variante.precio is not None else producto.precio_base
-        lineas.append((variante, d.cantidad, precio, inv))
+        original, precio, promocion_id = _precio_venta(session, variante, producto)
+        lineas.append((variante, d.cantidad, precio, inv, original, promocion_id))
 
-    total = sum(precio * cantidad for _, cantidad, precio, _ in lineas)
+    total = sum(precio * cantidad for _, cantidad, precio, *_ in lineas)
 
     venta = Venta(cliente_id=cliente_id, sucursal_id=data.sucursal_id, total=total)
     session.add(venta)
     session.flush()  # necesitamos venta.id para el detalle
 
-    for variante, cantidad, precio, inv in lineas:
+    for variante, cantidad, precio, inv, original, promocion_id in lineas:
         session.add(
             VentaDetalle(
                 venta_id=venta.id,
                 variante_id=variante.id,
                 cantidad=cantidad,
                 precio_unitario=precio,
+                precio_original=original,
+                promocion_id=promocion_id,
                 costo_unitario=inv.costo_promedio,
             )
         )
@@ -501,7 +522,7 @@ def registrar_cliente_rapido(session: Session, data: ClienteRegistroIn) -> Usuar
 
 def _resolver_lineas_presencial(
     session: Session, items: list[ItemVentaPresencialIn], sucursal_id: int
-) -> list[tuple[ProductoVariante, int, Decimal, Inventario]]:
+) -> list[tuple[ProductoVariante, int, Decimal, Inventario, Decimal, int | None]]:
     lineas = []
     for item in items:
         variante = session.get(ProductoVariante, item.variante_id)
@@ -523,8 +544,8 @@ def _resolver_lineas_presencial(
             raise HTTPException(
                 422, f"No hay stock suficiente de '{producto.nombre}' en tu sucursal."
             )
-        precio = variante.precio if variante.precio is not None else producto.precio_base
-        lineas.append((variante, item.cantidad, precio, inv))
+        original, precio, promocion_id = _precio_venta(session, variante, producto)
+        lineas.append((variante, item.cantidad, precio, inv, original, promocion_id))
     return lineas
 
 
@@ -541,7 +562,7 @@ def crear_venta_presencial(
         raise HTTPException(422, "Ese cliente no existe")
 
     lineas = _resolver_lineas_presencial(session, data.items, sucursal_id)
-    total = sum(precio * cantidad for _, cantidad, precio, _ in lineas)
+    total = sum(precio * cantidad for _, cantidad, precio, *_ in lineas)
 
     venta = Venta(
         cliente_id=cliente.id,
@@ -552,13 +573,15 @@ def crear_venta_presencial(
     session.add(venta)
     session.flush()  # necesitamos venta.id para el detalle
 
-    for variante, cantidad, precio, inv in lineas:
+    for variante, cantidad, precio, inv, original, promocion_id in lineas:
         session.add(
             VentaDetalle(
                 venta_id=venta.id,
                 variante_id=variante.id,
                 cantidad=cantidad,
                 precio_unitario=precio,
+                precio_original=original,
+                promocion_id=promocion_id,
                 costo_unitario=inv.costo_promedio,
             )
         )

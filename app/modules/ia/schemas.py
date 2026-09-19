@@ -15,6 +15,7 @@ class ProductoRecomendadoOut(BaseModel):
     categoria: str | None
     temporada: str | None
     precio_base: Decimal
+    precio_promocional: Decimal | None = None
     imagen_url: str | None
     motivo: str
 
@@ -40,6 +41,7 @@ class ProductoMencionadoOut(BaseModel):
     id: int
     nombre: str
     precio_base: Decimal
+    precio_promocional: Decimal | None = None
     imagen_url: str | None
 
 

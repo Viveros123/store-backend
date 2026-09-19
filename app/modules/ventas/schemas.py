@@ -24,7 +24,9 @@ class ItemCarritoOut(BaseModel):
     color: str | None
     sku: str | None
     imagen_efectivo: str | None
-    precio_unitario: Decimal | None
+    precio_unitario: Decimal | None  # ya con la promoción vigente (CU33)
+    precio_original: Decimal | None = None
+    promocion: str | None = None  # nombre de la promoción aplicada, si hay
     cantidad: int
     subtotal: Decimal | None
     disponible: bool  # si sigue existiendo stock de esta prenda en alguna sucursal
@@ -55,6 +57,7 @@ class ItemVentaOut(BaseModel):
     sku: str | None
     cantidad: int
     precio_unitario: Decimal
+    precio_original: Decimal | None = None
     subtotal: Decimal
 
 

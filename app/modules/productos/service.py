@@ -15,6 +15,7 @@ from app.modules.catalogo.models import (
 )
 from app.modules.inventario.models import Inventario, MovimientoInventario
 from app.modules.productos.models import Producto, ProductoVariante
+from app.modules.promociones import service as promociones_service
 from app.modules.proveedores.models import Proveedor
 from app.modules.reservas.models import ReservaDetalle
 from app.modules.ventas.models import CarritoDetalle, VentaDetalle
@@ -502,6 +503,10 @@ def _catalogo_producto_out(session: Session, p: Producto) -> dict:
                 "codigo_hex": color.codigo_hex,
             }
 
+    precio_final, promo = promociones_service.mejor_precio(
+        p.precio_base, promociones_service.promos_de_producto(session, p.id)
+    )
+
     return {
         "id": p.id,
         "nombre": p.nombre,
@@ -510,6 +515,8 @@ def _catalogo_producto_out(session: Session, p: Producto) -> dict:
         "coleccion": col.nombre if col else None,
         "temporada": temp.nombre if temp else None,
         "precio_base": p.precio_base,
+        "precio_promocional": precio_final if promo else None,
+        "promocion": promo.nombre if promo else None,
         "imagen_url": p.imagen_url,
         "colores": list(colores_vistos.values()),
         "cantidad_variantes": len(variantes),
@@ -611,10 +618,13 @@ def get_catalogo_detalle(session: Session, producto_id: int) -> dict:
         .where(ProductoVariante.producto_id == producto_id)
         .order_by(ProductoVariante.id)
     ).all()
+    promos = promociones_service.promos_de_producto(session, producto_id)
     resultado_variantes = []
     for v in variantes:
         talla = session.get(Talla, v.talla_id)
         color = session.get(Color, v.color_id)
+        precio_efectivo = v.precio if v.precio is not None else p.precio_base
+        precio_final, promo = promociones_service.mejor_precio(precio_efectivo, promos)
         resultado_variantes.append(
             {
                 "id": v.id,
@@ -623,7 +633,8 @@ def get_catalogo_detalle(session: Session, producto_id: int) -> dict:
                 "color_id": v.color_id,
                 "color": color.nombre if color else None,
                 "color_hex": color.codigo_hex if color else None,
-                "precio_efectivo": v.precio if v.precio is not None else p.precio_base,
+                "precio_efectivo": precio_efectivo,
+                "precio_promocional": precio_final if promo else None,
                 "imagen_efectivo": v.imagen_url or p.imagen_url,
             }
         )

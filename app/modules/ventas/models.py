@@ -87,7 +87,13 @@ class VentaDetalle(SQLModel, table=True):
     cantidad: int = Field(gt=0)
     # Foto del precio/costo al momento de la venta (para reportes exactos
     # aunque después cambien los precios o el costo promedio).
+    # `precio_unitario` es lo que se cobró (ya con descuento); `precio_original`
+    # es el precio sin promoción y `promocion_id` cuál se aplicó (CU33).
     precio_unitario: Decimal = Field(max_digits=10, decimal_places=2)
+    precio_original: Decimal | None = Field(
+        default=None, max_digits=10, decimal_places=2
+    )
+    promocion_id: int | None = Field(default=None, foreign_key="promocion.id")
     costo_unitario: Decimal | None = Field(
         default=None, max_digits=10, decimal_places=2
     )
