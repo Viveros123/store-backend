@@ -48,6 +48,7 @@ from app.modules.productos.public_router import (  # noqa: E402
 )
 from app.modules.promociones.router import router as promociones_router  # noqa: E402
 from app.modules.proveedores.router import router as proveedores_router  # noqa: E402
+from app.modules.reportes.router import router as reportes_router  # noqa: E402
 from app.modules.reservas.router import router as reservas_router  # noqa: E402
 from app.modules.sucursales.router import router as sucursales_router  # noqa: E402
 from app.modules.ventas.carrito_router import router as carrito_router  # noqa: E402
@@ -66,3 +67,4 @@ app.include_router(carrito_router)
 app.include_router(ventas_router)
 app.include_router(ia_router)
 app.include_router(promociones_router)
+app.include_router(reportes_router)
