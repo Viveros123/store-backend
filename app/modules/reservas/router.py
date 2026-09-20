@@ -9,6 +9,8 @@ from app.core.deps import CurrentUser, SessionDep, require_roles
 from app.modules.identidad.models import Rol, RolNombre, Usuario
 from app.modules.reservas import service
 from app.modules.reservas.schemas import (
+    FinalizarReservaIn,
+    FinalizarReservaOut,
     ReservaCreate,
     ReservaOut,
     ReservaSucursalOut,
@@ -95,3 +97,14 @@ def notificar(reserva_id: int, session: SessionDep, user: AdminOEncargado):  # C
 def recepcionar(reserva_id: int, session: SessionDep, user: AdminOEncargado):  # CU19
     sucursal_permitida = _sucursal_permitida(session, user)
     return service.recepcionar_reserva(session, reserva_id, sucursal_permitida)
+
+
+@router.post("/{reserva_id}/finalizar", response_model=FinalizarReservaOut)
+def finalizar(  # CU35
+    reserva_id: int,
+    data: FinalizarReservaIn,
+    session: SessionDep,
+    user: AdminOEncargado,
+):
+    sucursal_permitida = _sucursal_permitida(session, user)
+    return service.finalizar_reserva(session, user, reserva_id, data, sucursal_permitida)

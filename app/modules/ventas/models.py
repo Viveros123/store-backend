@@ -73,6 +73,9 @@ class Venta(SQLModel, table=True):
     # `VentaDetalle.sucursal_id`.
     sucursal_id: int = Field(foreign_key="sucursal.id")
     cajero_id: int | None = Field(default=None, foreign_key="usuario.id")  # CU24, null = compra web
+    # Si la venta nació al finalizar una reserva (las prendas que el cliente
+    # decidió llevarse). Queda pendiente hasta que el cajero la cobra.
+    reserva_id: int | None = Field(default=None, foreign_key="reserva.id")
 
     # Solo compras en línea: a dónde se envía. El delivery en sí ocurre fuera
     # del sistema. Ventas en caja y ventas antiguas quedan en NULL.

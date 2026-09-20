@@ -115,6 +115,18 @@ def historial_caja(session: SessionDep, cajero: CajeroUser):
     return service.historial_caja(session, cajero)
 
 
+@router.get("/caja/por-cobrar", response_model=list[VentaCajaOut])
+def ventas_por_cobrar(session: SessionDep, cajero: CajeroUser):  # CU25
+    return service.ventas_por_cobrar(session, cajero)
+
+
+@router.post("/{venta_id}/caja/anular", response_model=VentaOut)
+def anular_venta_por_cobrar(  # CU25
+    venta_id: int, session: SessionDep, cajero: CajeroUser
+):
+    return service.anular_venta_por_cobrar(session, cajero, venta_id)
+
+
 @router.post(
     "/presencial", response_model=VentaOut, status_code=status.HTTP_201_CREATED
 )

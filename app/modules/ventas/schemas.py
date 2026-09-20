@@ -71,6 +71,8 @@ class VentaOut(BaseModel):
     sucursal: str | None
     ciudad: str | None
     varias_sucursales: bool = False
+    # Si la venta nació de una reserva (se cobra en caja, no en línea).
+    reserva_id: int | None = None
     direccion_entrega: str | None = None
     referencia_entrega: str | None = None
     estado: str

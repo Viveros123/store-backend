@@ -1,6 +1,7 @@
 """Lógica de negocio del módulo Reservas — CU16/CU17/CU18/CU19."""
 
 from datetime import date, datetime, time
+from decimal import Decimal
 
 from fastapi import HTTPException, status
 from sqlmodel import Session, select
@@ -11,9 +12,15 @@ from app.modules.identidad.models import Usuario
 from app.modules.inventario.models import Inventario, MovimientoInventario, TipoMovimiento
 from app.modules.productos.models import Producto, ProductoVariante
 from app.modules.reservas.models import EstadoReserva, Reserva, ReservaDetalle
-from app.modules.reservas.schemas import ReservaCreate, SlotsDisponibilidad
+from app.modules.reservas.schemas import (
+    FinalizarReservaIn,
+    ReservaCreate,
+    SlotsDisponibilidad,
+)
 from app.modules.sucursales.models import Sucursal
 from app.modules.sucursales.service import horario_del_dia
+from app.modules.ventas import service as ventas_service
+from app.modules.ventas.models import Venta, VentaDetalle
 
 DURACIONES_VALIDAS = (30, 60)
 
@@ -108,6 +115,8 @@ def _reserva_out(session: Session, r: Reserva) -> dict:
         color = session.get(Color, variante.color_id) if variante else None
         items.append(
             {
+                "detalle_id": d.id,
+                "cantidad_llevada": d.cantidad_llevada,
                 "variante_id": d.variante_id,
                 "producto_id": producto.id if producto else None,
                 "producto": producto.nombre if producto else None,
@@ -351,3 +360,130 @@ def recepcionar_reserva(
     session.commit()
     session.refresh(reserva)
     return _reserva_sucursal_out(session, reserva)
+
+
+def finalizar_reserva(
+    session: Session,
+    encargado: Usuario,
+    reserva_id: int,
+    data: FinalizarReservaIn,
+    sucursal_permitida: int | None = None,
+) -> dict:
+    """El cliente ya se probó las prendas: el Encargado indica cuántas unidades
+    de cada una se lleva. Lo que devuelve vuelve al stock disponible; lo que se
+    lleva genera una venta pendiente que el Cajero cobra en caja."""
+    reserva = _reserva_de_sucursal(session, reserva_id, sucursal_permitida)
+    if reserva.estado != EstadoReserva.ATENDIDA:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Solo se pueden finalizar reservas ya recepcionadas",
+        )
+
+    detalles = session.exec(
+        select(ReservaDetalle).where(ReservaDetalle.reserva_id == reserva.id)
+    ).all()
+    por_id = {d.id: d for d in detalles}
+    llevadas = {i.detalle_id: i.cantidad_llevada for i in data.items}
+    if len(llevadas) != len(data.items) or set(llevadas) != set(por_id):
+        raise HTTPException(422, "Indicá qué pasa con cada prenda de la reserva")
+    for detalle_id, cantidad in llevadas.items():
+        if cantidad > por_id[detalle_id].cantidad:
+            raise HTTPException(422, "No se puede llevar más de lo que se reservó")
+
+    inventarios: dict[int, Inventario | None] = {}
+    precios: dict[int, tuple[Decimal, Decimal, int | None]] = {}
+    for d in detalles:
+        inventarios[d.id] = session.exec(
+            select(Inventario).where(
+                Inventario.variante_id == d.variante_id,
+                Inventario.sucursal_id == reserva.sucursal_id,
+            )
+        ).first()
+        if llevadas[d.id] > 0:
+            variante = session.get(ProductoVariante, d.variante_id)
+            producto = session.get(Producto, variante.producto_id) if variante else None
+            original = None
+            if variante is not None and producto is not None:
+                original = (
+                    variante.precio if variante.precio is not None else producto.precio_base
+                )
+            if original is None:
+                raise HTTPException(
+                    422, "Una de las prendas que se lleva no tiene precio de venta"
+                )
+            precios[d.id] = ventas_service._precio_venta(session, variante, producto)
+
+    unidades_llevadas = sum(llevadas.values())
+    unidades_devueltas = sum(d.cantidad for d in detalles) - unidades_llevadas
+
+    venta: Venta | None = None
+    if unidades_llevadas > 0:
+        total = sum(precios[did][1] * llevadas[did] for did in precios)
+        venta = Venta(
+            cliente_id=reserva.cliente_id,
+            sucursal_id=reserva.sucursal_id,
+            reserva_id=reserva.id,
+            total=total,
+        )
+        session.add(venta)
+        session.flush()  # necesitamos venta.id para el detalle
+
+    for d in detalles:
+        llevada = llevadas[d.id]
+        devuelta = d.cantidad - llevada
+        inv = inventarios[d.id]
+        d.cantidad_llevada = llevada
+        session.add(d)
+        if inv is not None:
+            # Al reservar, todo pasó de disponible a reservado. Ahora sale de
+            # "reservado": lo devuelto vuelve a disponible, lo llevado se vende.
+            inv.cantidad_reservada = max(0, inv.cantidad_reservada - d.cantidad)
+            inv.cantidad_disponible += devuelta
+            session.add(inv)
+        if devuelta > 0:
+            session.add(
+                MovimientoInventario(
+                    variante_id=d.variante_id,
+                    sucursal_id=reserva.sucursal_id,
+                    usuario_id=encargado.id,
+                    tipo=TipoMovimiento.LIBERACION_RESERVA,
+                    cantidad=devuelta,
+                    nota=f"Devolución al finalizar la reserva #{reserva.id}",
+                )
+            )
+        if llevada > 0 and venta is not None:
+            original, precio, promocion_id = precios[d.id]
+            session.add(
+                VentaDetalle(
+                    venta_id=venta.id,
+                    variante_id=d.variante_id,
+                    sucursal_id=reserva.sucursal_id,
+                    cantidad=llevada,
+                    precio_unitario=precio,
+                    precio_original=original,
+                    promocion_id=promocion_id,
+                    costo_unitario=inv.costo_promedio if inv is not None else None,
+                )
+            )
+            session.add(
+                MovimientoInventario(
+                    variante_id=d.variante_id,
+                    sucursal_id=reserva.sucursal_id,
+                    usuario_id=encargado.id,
+                    tipo=TipoMovimiento.SALIDA_VENTA,
+                    cantidad=llevada,
+                    nota=f"Venta #{venta.id} de la reserva #{reserva.id}",
+                )
+            )
+
+    reserva.estado = EstadoReserva.COMPLETADA
+    session.add(reserva)
+    session.commit()
+    session.refresh(reserva)
+    return {
+        "reserva": _reserva_sucursal_out(session, reserva),
+        "venta_id": venta.id if venta else None,
+        "unidades_llevadas": unidades_llevadas,
+        "unidades_devueltas": unidades_devueltas,
+        "total": venta.total if venta else Decimal(0),
+    }

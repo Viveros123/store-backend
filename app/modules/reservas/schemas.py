@@ -1,6 +1,7 @@
 """Esquemas del módulo Reservas — CU16."""
 
 from datetime import date, datetime, time
+from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
@@ -19,6 +20,8 @@ class ReservaCreate(BaseModel):
 
 
 class ItemReservaOut(BaseModel):
+    detalle_id: int
+    cantidad_llevada: int | None = None  # se llena al finalizar la reserva
     variante_id: int
     producto_id: int | None
     producto: str | None
@@ -56,6 +59,23 @@ class ReservaSucursalOut(ReservaOut):
     cliente_id: int
     cliente: str | None
     cliente_telefono: str | None
+
+
+class ItemFinalizarIn(BaseModel):
+    detalle_id: int
+    cantidad_llevada: int = Field(ge=0, le=20)
+
+
+class FinalizarReservaIn(BaseModel):
+    items: list[ItemFinalizarIn] = Field(min_length=1)
+
+
+class FinalizarReservaOut(BaseModel):
+    reserva: ReservaSucursalOut
+    venta_id: int | None  # None si el cliente devolvió todo
+    unidades_llevadas: int
+    unidades_devueltas: int
+    total: Decimal
 
 
 class ReservaSucursalPage(BaseModel):

@@ -49,3 +49,6 @@ class ReservaDetalle(SQLModel, table=True):
     reserva_id: int = Field(foreign_key="reserva.id")
     variante_id: int = Field(foreign_key="producto_variante.id")
     cantidad: int = Field(gt=0)
+    # Cuántas unidades se llevó el cliente al finalizar la reserva; el resto
+    # se devolvió al stock. NULL = la reserva todavía no se finalizó.
+    cantidad_llevada: int | None = Field(default=None, ge=0)

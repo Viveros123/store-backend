@@ -256,6 +256,7 @@ def _venta_out(session: Session, venta: Venta) -> dict:
         else (principal.nombre if principal else None),
         "ciudad": None if varias else (principal.ciudad if principal else None),
         "varias_sucursales": varias,
+        "reserva_id": venta.reserva_id,
         "direccion_entrega": venta.direccion_entrega,
         "referencia_entrega": venta.referencia_entrega,
         "estado": venta.estado,
@@ -435,13 +436,11 @@ def mis_ventas(session: Session, cliente_id: int) -> list[dict]:
     return [_venta_out(session, v) for v in ventas]
 
 
-def cancelar_venta(session: Session, cliente_id: int, venta_id: int) -> dict:
-    venta = _venta_del_cliente(session, venta_id, cliente_id)
-    if venta.estado != EstadoVenta.PENDIENTE_PAGO:
-        raise HTTPException(
-            status.HTTP_409_CONFLICT, "Esta venta ya no se puede cancelar"
-        )
-
+def _devolver_stock_de_venta(
+    session: Session, venta: Venta, usuario_id: int, nota: str
+) -> None:
+    """Devuelve al stock disponible (de la sucursal de origen de cada línea)
+    lo que una venta pendiente había descontado, y la deja ANULADA."""
     detalles = session.exec(
         select(VentaDetalle).where(VentaDetalle.venta_id == venta.id)
     ).all()
@@ -460,15 +459,31 @@ def cancelar_venta(session: Session, cliente_id: int, venta_id: int) -> dict:
             MovimientoInventario(
                 variante_id=d.variante_id,
                 sucursal_id=origen_id,
-                usuario_id=cliente_id,
+                usuario_id=usuario_id,
                 tipo=TipoMovimiento.ANULACION_VENTA,
                 cantidad=d.cantidad,
-                nota=f"Cancelación de la venta #{venta.id}",
+                nota=nota,
             )
         )
-
     venta.estado = EstadoVenta.ANULADA
     session.add(venta)
+
+
+def cancelar_venta(session: Session, cliente_id: int, venta_id: int) -> dict:
+    venta = _venta_del_cliente(session, venta_id, cliente_id)
+    if venta.reserva_id is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Esta compra viene de una reserva y se cobra en caja.",
+        )
+    if venta.estado != EstadoVenta.PENDIENTE_PAGO:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "Esta venta ya no se puede cancelar"
+        )
+
+    _devolver_stock_de_venta(
+        session, venta, cliente_id, f"Cancelación de la venta #{venta.id}"
+    )
     session.commit()
     return _venta_out(session, venta)
 
@@ -493,6 +508,11 @@ def _pago_out(
 
 def iniciar_pago(session: Session, cliente_id: int, venta_id: int) -> dict:
     venta = _venta_del_cliente(session, venta_id, cliente_id)
+    if venta.reserva_id is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Esta compra viene de una reserva y se paga en caja.",
+        )
     if venta.estado != EstadoVenta.PENDIENTE_PAGO:
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Esta venta ya no está pendiente de pago"
@@ -698,7 +718,12 @@ def _venta_presencial_de_la_sucursal(
     session: Session, venta_id: int, sucursal_id: int
 ) -> Venta:
     venta = session.get(Venta, venta_id)
-    if venta is None or venta.sucursal_id != sucursal_id or venta.cajero_id is None:
+    # Son de caja las ventas con cajero (presenciales) y las que nacieron de
+    # una reserva (todavía sin cajero hasta que se cobran).
+    es_de_caja = venta is not None and (
+        venta.cajero_id is not None or venta.reserva_id is not None
+    )
+    if venta is None or venta.sucursal_id != sucursal_id or not es_de_caja:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Venta no encontrada")
     return venta
 
@@ -739,7 +764,43 @@ def procesar_pago_caja(
     # distintos), en una venta presencial el cliente se lleva la prenda ahí
     # mismo: pagar ya implica la venta completa, no queda un paso pendiente.
     venta.estado = EstadoVenta.COMPLETADA
+    if venta.cajero_id is None:  # venta de reserva: la cobra este cajero
+        venta.cajero_id = cajero.id
     session.add(venta)
+    session.commit()
+    return _venta_out(session, venta)
+
+
+def ventas_por_cobrar(session: Session, cajero: Usuario) -> list[dict]:
+    """Ventas de reservas finalizadas en la sucursal, esperando el cobro."""
+    sucursal_id = _sucursal_del_cajero(cajero)
+    ventas = session.exec(
+        select(Venta)
+        .where(
+            Venta.sucursal_id == sucursal_id,
+            Venta.reserva_id.is_not(None),
+            Venta.estado == EstadoVenta.PENDIENTE_PAGO,
+        )
+        .order_by(Venta.fecha_creacion.desc())
+    ).all()
+    return [_venta_caja_out(session, v) for v in ventas]
+
+
+def anular_venta_por_cobrar(session: Session, cajero: Usuario, venta_id: int) -> dict:
+    """El cliente decidió no llevarse lo que iba a pagar: vuelve al stock."""
+    sucursal_id = _sucursal_del_cajero(cajero)
+    venta = _venta_presencial_de_la_sucursal(session, venta_id, sucursal_id)
+    if venta.reserva_id is None or venta.estado != EstadoVenta.PENDIENTE_PAGO:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Solo se pueden anular las ventas de reserva pendientes de cobro",
+        )
+    _devolver_stock_de_venta(
+        session,
+        venta,
+        cajero.id,
+        f"Venta #{venta.id} de la reserva #{venta.reserva_id} no cobrada",
+    )
     session.commit()
     return _venta_out(session, venta)
 
