@@ -172,22 +172,28 @@ def crear_reserva(session: Session, cliente_id: int, data: ReservaCreate) -> dic
         if inicio_min < _a_minutos(r.hora_fin) and fin_min > _a_minutos(r.hora_inicio):
             raise HTTPException(409, "Ese turno ya está reservado por otro cliente")
 
+    # Si una misma variante llega repetida se suman las cantidades: así el
+    # stock se valida (y se descuenta) una sola vez por variante.
+    cantidades: dict[int, int] = {}
+    for item in data.items:
+        cantidades[item.variante_id] = cantidades.get(item.variante_id, 0) + item.cantidad
+
     # Validar variantes + stock disponible en esa sucursal
     inventarios: dict[int, Inventario] = {}
-    for item in data.items:
-        if session.get(ProductoVariante, item.variante_id) is None:
+    for variante_id, cantidad in cantidades.items():
+        if session.get(ProductoVariante, variante_id) is None:
             raise HTTPException(422, "Una de las prendas elegidas ya no existe")
         inv = session.exec(
             select(Inventario).where(
-                Inventario.variante_id == item.variante_id,
+                Inventario.variante_id == variante_id,
                 Inventario.sucursal_id == data.sucursal_id,
             )
         ).first()
-        if inv is None or inv.cantidad_disponible < item.cantidad:
+        if inv is None or inv.cantidad_disponible < cantidad:
             raise HTTPException(
                 422, "No hay stock suficiente de esa prenda en la sucursal elegida"
             )
-        inventarios[item.variante_id] = inv
+        inventarios[variante_id] = inv
 
     reserva = Reserva(
         cliente_id=cliente_id,
@@ -200,16 +206,16 @@ def crear_reserva(session: Session, cliente_id: int, data: ReservaCreate) -> dic
     session.add(reserva)
     session.flush()  # necesitamos reserva.id para el detalle
 
-    for item in data.items:
-        inv = inventarios[item.variante_id]
-        inv.cantidad_disponible -= item.cantidad
-        inv.cantidad_reservada += item.cantidad
+    for variante_id, cantidad in cantidades.items():
+        inv = inventarios[variante_id]
+        inv.cantidad_disponible -= cantidad
+        inv.cantidad_reservada += cantidad
         session.add(inv)
         session.add(
             ReservaDetalle(
                 reserva_id=reserva.id,
-                variante_id=item.variante_id,
-                cantidad=item.cantidad,
+                variante_id=variante_id,
+                cantidad=cantidad,
             )
         )
 
