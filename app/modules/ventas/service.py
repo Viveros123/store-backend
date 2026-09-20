@@ -69,7 +69,8 @@ def _precio_venta(
     la promoción aplicada o None) — CU33."""
     original = variante.precio if variante.precio is not None else producto.precio_base
     final, promo = promociones_service.mejor_precio(
-        original, promociones_service.promos_de_producto(session, producto.id)
+        original,
+        promociones_service.promos_de_variante(session, variante.id, producto.id),
     )
     return original, final, promo.id if promo else None
 

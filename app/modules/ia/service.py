@@ -145,6 +145,7 @@ def _variantes_por_producto(
         select(
             ProductoVariante.producto_id,
             ProductoVariante.id,
+            ProductoVariante.precio,
             Talla.valor,
             Color.nombre,
             Sucursal.nombre,
@@ -158,7 +159,7 @@ def _variantes_por_producto(
     ).all()
 
     agrupado: dict[int, dict[int, dict]] = {}
-    for producto_id, variante_id, talla, color, sucursal_nombre, cantidad in filas:
+    for producto_id, variante_id, precio, talla, color, sucursal_nombre, cantidad in filas:
         variantes = agrupado.setdefault(producto_id, {})
         variante = variantes.setdefault(
             variante_id,
@@ -166,6 +167,7 @@ def _variantes_por_producto(
                 "id": variante_id,
                 "talla": talla,
                 "color": color,
+                "precio_propio": precio,  # None = usa el precio del producto
                 "sucursales_con_stock": [],
             },
         )
@@ -197,18 +199,36 @@ def chat_asistente(
         if promo:
             precios_promo[p.id] = (final, promo)
 
+    # Precio y promoción de cada variante (la promoción puede cubrir el
+    # producto completo o solo algunas variantes).
+    promos_por_variante = promociones_service.promos_vigentes_por_variante(
+        session,
+        [(v["id"], p.id) for p in candidatos for v in variantes_por_producto.get(p.id, [])],
+    )
+    variantes_ia: dict[int, list[dict]] = {}
+    for p in candidatos:
+        lista = []
+        for v in variantes_por_producto.get(p.id, []):
+            efectivo = v["precio_propio"] if v["precio_propio"] is not None else p.precio_base
+            final, promo = promociones_service.mejor_precio(
+                efectivo, promos_por_variante.get(v["id"], [])
+            )
+            entrada = {k: val for k, val in v.items() if k != "precio_propio"}
+            entrada["precio"] = float(efectivo)
+            entrada["promocion"] = (
+                {"nombre": promo.nombre, "precio_con_descuento": float(final)}
+                if promo
+                else None
+            )
+            lista.append(entrada)
+        variantes_ia[p.id] = lista
+
     lista_candidatos = [
         {
             "id": p.id,
             "nombre": p.nombre,
             "precio_base": float(p.precio_base),
-            "promocion": {
-                "nombre": precios_promo[p.id][1].nombre,
-                "precio_con_descuento": float(precios_promo[p.id][0]),
-            }
-            if p.id in precios_promo
-            else None,
-            "variantes": variantes_por_producto.get(p.id, []),
+            "variantes": variantes_ia[p.id],
         }
         for p in candidatos
     ]
@@ -231,9 +251,11 @@ def chat_asistente(
         "español. Nunca inventes productos, ids, tallas, colores, precios, "
         "sucursales ni ningún otro dato que no esté en el catálogo dado: si "
         "te preguntan algo que no figura ahí (ej. stock exacto en unidades, "
-        "reservas), decilo explícitamente en vez de adivinar. Si un producto "
-        "tiene \"promocion\", ese es el precio que realmente se cobra: "
-        "mencioná el precio con descuento y el nombre de la promoción. Los "
+        "reservas), decilo explícitamente en vez de adivinar. Cada variante trae su "
+        "\"precio\" y, si tiene \"promocion\", ese es el precio que realmente se "
+        "cobra por esa variante: mencioná el precio con descuento y el nombre de "
+        "la promoción (si solo algunas variantes de un producto tienen "
+        "promoción, aclará cuáles). Los "
         "precios están en bolivianos: escribilos como \"Bs 75.00\", nunca "
         "con el signo $.\n\n"
         "Además podés AGREGAR PRENDAS AL CARRITO del cliente de verdad "

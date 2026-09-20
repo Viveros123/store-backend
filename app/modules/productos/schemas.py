@@ -142,6 +142,7 @@ class CatalogoVarianteOut(BaseModel):
     color_hex: str | None
     precio_efectivo: Decimal
     precio_promocional: Decimal | None = None
+    promocion: str | None = None  # nombre de la promoción que aplica a esta variante
     imagen_efectivo: str | None = None
 
 

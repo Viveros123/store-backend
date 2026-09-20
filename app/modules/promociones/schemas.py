@@ -15,7 +15,9 @@ class PromocionCreate(BaseModel):
     fecha_inicio: date
     fecha_fin: date
     activo: bool = True
-    producto_ids: list[int] = Field(min_length=1)
+    # Productos completos (todas sus variantes) y/o variantes puntuales.
+    producto_ids: list[int] = Field(default_factory=list)
+    variante_ids: list[int] = Field(default_factory=list)
 
 
 class PromocionUpdate(BaseModel):
@@ -26,12 +28,24 @@ class PromocionUpdate(BaseModel):
     fecha_inicio: date | None = None
     fecha_fin: date | None = None
     activo: bool | None = None
-    producto_ids: list[int] | None = Field(default=None, min_length=1)
+    producto_ids: list[int] | None = None
+    variante_ids: list[int] | None = None
 
 
 class ProductoPromocionOut(BaseModel):
     id: int
     nombre: str
+
+
+class VariantePromocionOut(BaseModel):
+    id: int
+    producto: str
+    talla: str | None
+    color: str | None
+
+
+class VarianteOpcionOut(VariantePromocionOut):
+    producto_id: int
 
 
 class PromocionOut(BaseModel):
@@ -45,3 +59,4 @@ class PromocionOut(BaseModel):
     activo: bool
     vigente: bool  # activa y dentro del rango de fechas (hoy, hora de Bolivia)
     productos: list[ProductoPromocionOut]
+    variantes: list[VariantePromocionOut]

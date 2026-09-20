@@ -11,6 +11,7 @@ from app.modules.promociones.schemas import (
     PromocionCreate,
     PromocionOut,
     PromocionUpdate,
+    VarianteOpcionOut,
 )
 
 router = APIRouter(prefix="/promociones", tags=["promociones"])
@@ -26,6 +27,11 @@ def listar(session: SessionDep, _admin: AdminUser):  # CU33
 @router.post("", response_model=PromocionOut, status_code=status.HTTP_201_CREATED)
 def crear(data: PromocionCreate, session: SessionDep, _admin: AdminUser):  # CU33
     return service.crear_promocion(session, data)
+
+
+@router.get("/variantes/opciones", response_model=list[VarianteOpcionOut])
+def variantes_opciones(session: SessionDep, _admin: AdminUser):  # CU33
+    return service.variantes_opciones(session)
 
 
 @router.get("/{promocion_id}", response_model=PromocionOut)

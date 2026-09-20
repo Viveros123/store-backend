@@ -30,7 +30,18 @@ class Promocion(SQLModel, table=True):
 
 
 class PromocionProducto(SQLModel, table=True):
+    """La promoción cubre TODAS las variantes (tallas y colores) del producto."""
+
     __tablename__ = "promocion_producto"
 
     promocion_id: int = Field(foreign_key="promocion.id", primary_key=True)
     producto_id: int = Field(foreign_key="producto.id", primary_key=True)
+
+
+class PromocionVariante(SQLModel, table=True):
+    """La promoción cubre solo esta variante puntual (talla + color)."""
+
+    __tablename__ = "promocion_variante"
+
+    promocion_id: int = Field(foreign_key="promocion.id", primary_key=True)
+    variante_id: int = Field(foreign_key="producto_variante.id", primary_key=True)
