@@ -80,6 +80,11 @@ def _variante_out(session: Session, v: ProductoVariante, producto: Producto) -> 
         ),
         "imagen_url": v.imagen_url,
         "imagen_efectivo": v.imagen_url or producto.imagen_url,
+        "imagen_ar_url": v.imagen_ar_url,
+        "ancla_izq_x": v.ancla_izq_x,
+        "ancla_izq_y": v.ancla_izq_y,
+        "ancla_der_x": v.ancla_der_x,
+        "ancla_der_y": v.ancla_der_y,
     }
 
 
@@ -647,6 +652,11 @@ def get_catalogo_detalle(session: Session, producto_id: int) -> dict:
                 "precio_promocional": precio_final if promo else None,
                 "promocion": promo.nombre if promo else None,
                 "imagen_efectivo": v.imagen_url or p.imagen_url,
+                "imagen_ar_url": v.imagen_ar_url,
+                "ancla_izq_x": v.ancla_izq_x,
+                "ancla_izq_y": v.ancla_izq_y,
+                "ancla_der_x": v.ancla_der_x,
+                "ancla_der_y": v.ancla_der_y,
             }
         )
     out["variantes"] = resultado_variantes

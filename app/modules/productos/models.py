@@ -60,3 +60,13 @@ class ProductoVariante(SQLModel, table=True):
     )
     # Si es NULL, se usa la imagen_url del producto (ej. variantes de otro color).
     imagen_url: str | None = Field(default=None, max_length=255)
+
+    # CU20 — Vestidor virtual (RA): imagen PNG de la prenda con fondo
+    # transparente, vista de frente, y la posición de sus hombros dentro de la
+    # imagen como fracción del ancho (x) y del alto (y), entre 0 y 1. La app
+    # móvil alinea esas anclas con los hombros detectados en la foto del cliente.
+    imagen_ar_url: str | None = Field(default=None, max_length=255)
+    ancla_izq_x: Decimal | None = Field(default=None, max_digits=6, decimal_places=4)
+    ancla_izq_y: Decimal | None = Field(default=None, max_digits=6, decimal_places=4)
+    ancla_der_x: Decimal | None = Field(default=None, max_digits=6, decimal_places=4)
+    ancla_der_y: Decimal | None = Field(default=None, max_digits=6, decimal_places=4)

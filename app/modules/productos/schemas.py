@@ -25,6 +25,12 @@ class VarianteOut(BaseModel):
     precio_compra_efectivo: Decimal | None = None  # precio_compra o el del producto
     imagen_url: str | None = None
     imagen_efectivo: str | None = None  # imagen_url o la del producto
+    # CU20 — vestidor virtual: imagen PNG transparente y anclas de hombro (0 a 1)
+    imagen_ar_url: str | None = None
+    ancla_izq_x: Decimal | None = None
+    ancla_izq_y: Decimal | None = None
+    ancla_der_x: Decimal | None = None
+    ancla_der_y: Decimal | None = None
 
 
 class VarianteCreate(BaseModel):
@@ -34,6 +40,11 @@ class VarianteCreate(BaseModel):
     precio: Decimal | None = Field(default=None, gt=0)
     precio_compra: Decimal | None = Field(default=None, gt=0)
     imagen_url: str | None = Field(default=None, max_length=255)
+    imagen_ar_url: str | None = Field(default=None, max_length=255)
+    ancla_izq_x: Decimal | None = Field(default=None, ge=0, le=1)
+    ancla_izq_y: Decimal | None = Field(default=None, ge=0, le=1)
+    ancla_der_x: Decimal | None = Field(default=None, ge=0, le=1)
+    ancla_der_y: Decimal | None = Field(default=None, ge=0, le=1)
 
 
 class VarianteUpdate(BaseModel):
@@ -43,6 +54,11 @@ class VarianteUpdate(BaseModel):
     precio: Decimal | None = Field(default=None, gt=0)
     precio_compra: Decimal | None = Field(default=None, gt=0)
     imagen_url: str | None = Field(default=None, max_length=255)
+    imagen_ar_url: str | None = Field(default=None, max_length=255)
+    ancla_izq_x: Decimal | None = Field(default=None, ge=0, le=1)
+    ancla_izq_y: Decimal | None = Field(default=None, ge=0, le=1)
+    ancla_der_x: Decimal | None = Field(default=None, ge=0, le=1)
+    ancla_der_y: Decimal | None = Field(default=None, ge=0, le=1)
 
 
 # --------------------------------------------------------------------------- #
@@ -144,6 +160,12 @@ class CatalogoVarianteOut(BaseModel):
     precio_promocional: Decimal | None = None
     promocion: str | None = None  # nombre de la promoción que aplica a esta variante
     imagen_efectivo: str | None = None
+    # CU20 — vestidor virtual (None si la variante no tiene imagen AR)
+    imagen_ar_url: str | None = None
+    ancla_izq_x: Decimal | None = None
+    ancla_izq_y: Decimal | None = None
+    ancla_der_x: Decimal | None = None
+    ancla_der_y: Decimal | None = None
 
 
 class CatalogoProductoDetalle(CatalogoProductoOut):
