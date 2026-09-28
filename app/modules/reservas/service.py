@@ -152,6 +152,14 @@ def crear_reserva(session: Session, cliente_id: int, data: ReservaCreate) -> dic
     if data.fecha < date.today():
         raise HTTPException(422, "No se puede reservar en una fecha pasada")
 
+    # CU16: serializar la comprobacion de turnos de esta sucursal.
+    # Se bloquea una fila existente, incluso si aun no hay reservas del dia.
+    session.exec(
+        select(Sucursal)
+        .where(Sucursal.id == data.sucursal_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).first()
     _get_sucursal_activa(session, data.sucursal_id)
 
     horario = horario_del_dia(session, data.sucursal_id, data.fecha.weekday())
@@ -180,7 +188,7 @@ def crear_reserva(session: Session, cliente_id: int, data: ReservaCreate) -> dic
 
     # Validar variantes + stock disponible en esa sucursal
     inventarios: dict[int, Inventario] = {}
-    for variante_id, cantidad in cantidades.items():
+    for variante_id, cantidad in sorted(cantidades.items()):
         if session.get(ProductoVariante, variante_id) is None:
             raise HTTPException(422, "Una de las prendas elegidas ya no existe")
         inv = session.exec(
@@ -188,6 +196,10 @@ def crear_reserva(session: Session, cliente_id: int, data: ReservaCreate) -> dic
                 Inventario.variante_id == variante_id,
                 Inventario.sucursal_id == data.sucursal_id,
             )
+            # CU16: leer stock actualizado DESPUES de obtener el bloqueo.
+            # Se conserva hasta commit/rollback; otra reserva debe esperar.
+            .with_for_update()
+            .execution_options(populate_existing=True)
         ).first()
         if inv is None or inv.cantidad_disponible < cantidad:
             raise HTTPException(
