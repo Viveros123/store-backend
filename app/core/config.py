@@ -24,6 +24,9 @@ class Settings(BaseSettings):
 
     # CORS: orígenes del frontend permitidos (separados por coma)
     cors_origins: str = "http://localhost:4200"
+    cors_origin_regex: str = (
+        r"https://store-frontend(?:-[a-z0-9]+)*-viveros123\.vercel\.app"
+    )
 
     # Stripe (modo test) — CU27/CU28
     stripe_secret_key: str = ""
