@@ -18,6 +18,7 @@ from app.modules.productos.models import Producto, ProductoVariante
 from app.modules.promociones import service as promociones_service
 from app.modules.proveedores.models import Proveedor
 from app.modules.reservas.models import ReservaDetalle
+from app.modules.sucursales.models import Sucursal
 from app.modules.ventas.models import CarritoDetalle, VentaDetalle
 
 
@@ -545,9 +546,30 @@ def _temporadas_vigentes_ids(session: Session) -> list[int]:
     ]
 
 
+def _productos_de_empresa_ids(empresa_id: int):
+    """Productos vinculados al tenant mediante inventario de sus sucursales."""
+    return (
+        select(ProductoVariante.producto_id)
+        .join(Inventario, Inventario.variante_id == ProductoVariante.id)
+        .join(Sucursal, Sucursal.id == Inventario.sucursal_id)
+        .where(Sucursal.empresa_id == empresa_id)
+        .distinct()
+    )
+
+
+def _variantes_de_empresa_ids(empresa_id: int):
+    return (
+        select(Inventario.variante_id)
+        .join(Sucursal, Sucursal.id == Inventario.sucursal_id)
+        .where(Sucursal.empresa_id == empresa_id)
+        .distinct()
+    )
+
+
 def list_catalogo(
     session: Session,
     *,
+    empresa_id: int,
     q: str | None = None,
     categoria_id: int | None = None,
     coleccion_id: int | None = None,
@@ -559,7 +581,11 @@ def list_catalogo(
     page: int = 1,
     size: int = 20,
 ) -> tuple[list[dict], int]:
-    filtros = [Producto.activo == True, Producto.precio_base.is_not(None)]  # noqa: E712
+    filtros = [
+        Producto.activo == True,  # noqa: E712
+        Producto.precio_base.is_not(None),
+        Producto.id.in_(_productos_de_empresa_ids(empresa_id)),
+    ]
     if q:
         filtros.append(func.lower(Producto.nombre).like(f"%{q.strip().lower()}%"))
     if categoria_id is not None:
@@ -592,7 +618,9 @@ def list_catalogo(
     return [_catalogo_producto_out(session, p) for p in items], total
 
 
-def list_destacados(session: Session, limit: int = 12) -> list[dict]:
+def list_destacados(
+    session: Session, *, empresa_id: int, limit: int = 12
+) -> list[dict]:
     """Vitrina de la portada: productos de temporadas vigentes."""
     ids_vigentes = _temporadas_vigentes_ids(session)
     if not ids_vigentes:
@@ -611,6 +639,7 @@ def list_destacados(session: Session, limit: int = 12) -> list[dict]:
             Producto.activo == True,  # noqa: E712
             Producto.precio_base.is_not(None),
             Producto.coleccion_id.in_(col_ids),
+            Producto.id.in_(_productos_de_empresa_ids(empresa_id)),
         )
         .order_by(Producto.fecha_creacion.desc())
         .limit(limit)
@@ -618,15 +647,28 @@ def list_destacados(session: Session, limit: int = 12) -> list[dict]:
     return [_catalogo_producto_out(session, p) for p in productos]
 
 
-def get_catalogo_detalle(session: Session, producto_id: int) -> dict:
+def get_catalogo_detalle(
+    session: Session, producto_id: int, *, empresa_id: int
+) -> dict:
     p = session.get(Producto, producto_id)
-    if p is None or not p.activo or p.precio_base is None:
+    pertenece = session.exec(
+        select(ProductoVariante.id)
+        .where(
+            ProductoVariante.producto_id == producto_id,
+            ProductoVariante.id.in_(_variantes_de_empresa_ids(empresa_id)),
+        )
+        .limit(1)
+    ).first()
+    if p is None or not p.activo or p.precio_base is None or pertenece is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Producto no encontrado")
 
     out = _catalogo_producto_out(session, p)
     variantes = session.exec(
         select(ProductoVariante)
-        .where(ProductoVariante.producto_id == producto_id)
+        .where(
+            ProductoVariante.producto_id == producto_id,
+            ProductoVariante.id.in_(_variantes_de_empresa_ids(empresa_id)),
+        )
         .order_by(ProductoVariante.id)
     ).all()
     promos_por_variante = promociones_service.promos_vigentes_por_variante(

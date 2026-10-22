@@ -340,7 +340,7 @@ def _asignar_despacho(
             )
     return asignacion
 
-
+#logica de venta desde el carrito
 def crear_checkout(session: Session, cliente_id: int, data: CheckoutCreate) -> dict:
     direccion = data.direccion_entrega.strip()
     if len(direccion) < 5:
@@ -506,7 +506,7 @@ def _pago_out(
         "fecha_creacion": pago.fecha_creacion,
     }
 
-
+#pago mediante stripe que genera un qr y checkout
 def iniciar_pago(session: Session, cliente_id: int, venta_id: int) -> dict:
     venta = _venta_del_cliente(session, venta_id, cliente_id)
     if venta.reserva_id is not None:
@@ -595,7 +595,9 @@ def _sucursal_del_cajero(cajero: Usuario) -> int:
     return cajero.sucursal_id
 
 
-def buscar_clientes(session: Session, q: str) -> list[Usuario]:
+def buscar_clientes(
+    session: Session, q: str, *, empresa_id: int | None = None
+) -> list[Usuario]:
     rol_cliente = session.exec(
         select(Rol).where(Rol.nombre == RolNombre.CLIENTE)
     ).first()
@@ -607,6 +609,8 @@ def buscar_clientes(session: Session, q: str) -> list[Usuario]:
         Usuario.rol_id == rol_cliente.id,
         Usuario.activo == True,  # noqa: E712
     )
+    if empresa_id is not None:
+        consulta = consulta.where(Usuario.empresa_id == empresa_id)
     if q:
         patron = f"%{q.lower()}%"
         consulta = consulta.where(
@@ -625,10 +629,14 @@ def buscar_clientes(session: Session, q: str) -> list[Usuario]:
     return session.exec(consulta.limit(15)).all()
 
 
-def registrar_cliente_rapido(session: Session, data: ClienteRegistroIn) -> Usuario:
+def registrar_cliente_rapido(
+    session: Session, data: ClienteRegistroIn, *, empresa_id: int | None = None
+) -> Usuario:
     """El cajero da de alta a un cliente nuevo desde el mostrador, con las
     mismas reglas que el registro público (CU1), para poder ligarle la venta."""
-    return identidad_service.registrar_cliente(session, data)
+    return identidad_service.registrar_cliente(
+        session, data, empresa_id=empresa_id
+    )
 
 
 def _resolver_lineas_presencial(
@@ -669,7 +677,11 @@ def crear_venta_presencial(
         select(Rol).where(Rol.nombre == RolNombre.CLIENTE)
     ).first()
     cliente = session.get(Usuario, data.cliente_id)
-    if cliente is None or (rol_cliente and cliente.rol_id != rol_cliente.id):
+    if (
+        cliente is None
+        or (rol_cliente and cliente.rol_id != rol_cliente.id)
+        or cliente.empresa_id != cajero.empresa_id
+    ):
         raise HTTPException(422, "Ese cliente no existe")
 
     lineas = _resolver_lineas_presencial(session, data.items, sucursal_id)
@@ -874,6 +886,7 @@ def listar_ventas_sucursal(
     sucursal_permitida: int | None,
     page: int,
     size: int,
+    empresa_id: int | None = None,
 ) -> tuple[list[dict], int]:
     """sucursal_permitida viene del router: None = admin (puede filtrar por
     cualquier sucursal o ver todas), un id = encargado (forzado a la suya)."""
@@ -887,6 +900,20 @@ def listar_ventas_sucursal(
         )
 
     base = select(Venta)
+    if empresa_id is not None:
+        sucursales_empresa = select(Sucursal.id).where(
+            Sucursal.empresa_id == empresa_id
+        )
+        base = base.where(
+            or_(
+                Venta.sucursal_id.in_(sucursales_empresa),
+                Venta.id.in_(
+                    select(VentaDetalle.venta_id).where(
+                        VentaDetalle.sucursal_id.in_(sucursales_empresa)
+                    )
+                ),
+            )
+        )
     if sucursal_permitida is not None:
         base = base.where(_sale_de(sucursal_permitida))
     elif sucursal_id is not None:

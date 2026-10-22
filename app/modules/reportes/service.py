@@ -28,11 +28,15 @@ def _dinero(valor: Decimal) -> Decimal:
     return valor.quantize(_CENTAVOS, rounding=ROUND_HALF_UP)
 
 
-def _sucursal_o_error(session: Session, sucursal_id: int | None) -> Sucursal | None:
+def _sucursal_o_error(
+    session: Session, sucursal_id: int | None, empresa_id: int | None = None
+) -> Sucursal | None:
     if sucursal_id is None:
         return None
     sucursal = session.get(Sucursal, sucursal_id)
-    if sucursal is None:
+    if sucursal is None or (
+        empresa_id is not None and sucursal.empresa_id != empresa_id
+    ):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Sucursal no encontrada")
     return sucursal
 
@@ -60,13 +64,15 @@ def reporte_ventas(
     fecha_desde: date | None,
     fecha_hasta: date | None,
     sucursal_id: int | None,
+    *,
+    empresa_id: int | None = None,
 ) -> dict:
     hoy = datetime.now(_BOLIVIA).date()
     hasta = fecha_hasta or hoy
     desde = fecha_desde or (hasta - timedelta(days=29))
     if hasta < desde:
         raise HTTPException(422, "La fecha final no puede ser anterior a la inicial")
-    sucursal = _sucursal_o_error(session, sucursal_id)
+    sucursal = _sucursal_o_error(session, sucursal_id, empresa_id)
 
     # Los días se miden en hora de Bolivia; en la base las fechas están en UTC.
     desde_dt = datetime.combine(desde, time.min, tzinfo=_BOLIVIA).astimezone(timezone.utc)
@@ -97,9 +103,22 @@ def reporte_ventas(
     )
     if sucursal_id is not None:
         consulta = consulta.where(sucursal_linea == sucursal_id)
+    if empresa_id is not None:
+        consulta = consulta.where(
+            sucursal_linea.in_(
+                select(Sucursal.id).where(Sucursal.empresa_id == empresa_id)
+            )
+        )
     filas = session.exec(consulta).all()
 
-    nombres_sucursal = {s.id: s.nombre for s in session.exec(select(Sucursal)).all()}
+    sucursales_query = select(Sucursal)
+    if empresa_id is not None:
+        sucursales_query = sucursales_query.where(
+            Sucursal.empresa_id == empresa_id
+        )
+    nombres_sucursal = {
+        s.id: s.nombre for s in session.exec(sucursales_query).all()
+    }
 
     ingresos = costo = ingresos_con_costo = descuentos = Decimal(0)
     unidades = lineas_sin_costo = 0
@@ -182,11 +201,16 @@ def reporte_ventas(
 #  Reporte de inventario
 # --------------------------------------------------------------------------- #
 def reporte_inventario(
-    session: Session, admin_id: int, sucursal_id: int | None, umbral: int
+    session: Session,
+    admin_id: int,
+    sucursal_id: int | None,
+    umbral: int,
+    *,
+    empresa_id: int | None = None,
 ) -> dict:
     if umbral < 0:
         raise HTTPException(422, "El umbral de stock bajo no puede ser negativo")
-    sucursal = _sucursal_o_error(session, sucursal_id)
+    sucursal = _sucursal_o_error(session, sucursal_id, empresa_id)
 
     consulta = (
         select(
@@ -210,6 +234,8 @@ def reporte_inventario(
     )
     if sucursal_id is not None:
         consulta = consulta.where(Inventario.sucursal_id == sucursal_id)
+    if empresa_id is not None:
+        consulta = consulta.where(Sucursal.empresa_id == empresa_id)
 
     items = []
     disponibles = reservadas = bajos = 0

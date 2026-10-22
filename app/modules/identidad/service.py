@@ -36,6 +36,7 @@ def to_usuario_out(session: Session, usuario: Usuario) -> UsuarioOut:
         telefono=usuario.telefono,
         rol_id=usuario.rol_id,
         rol=rol.nombre if rol else None,
+        empresa_id=usuario.empresa_id,
         sucursal_id=usuario.sucursal_id,
         proveedor_id=usuario.proveedor_id,
         activo=usuario.activo,
@@ -46,7 +47,9 @@ def to_usuario_out(session: Session, usuario: Usuario) -> UsuarioOut:
 # --------------------------------------------------------------------------- #
 #  Autenticación
 # --------------------------------------------------------------------------- #
-def registrar_cliente(session: Session, data: ClienteRegistroIn) -> Usuario:
+def registrar_cliente(
+    session: Session, data: ClienteRegistroIn, *, empresa_id: int | None = None
+) -> Usuario:
     """CU1 — alta pública de un cliente."""
     if get_usuario_by_email(session, data.email):
         raise HTTPException(
@@ -62,12 +65,32 @@ def registrar_cliente(session: Session, data: ClienteRegistroIn) -> Usuario:
             detail="El rol Cliente no está configurado (ejecutar el seed)",
         )
 
+    # El alta pública heredada permanece vinculada a la tienda principal.
+    # La selección explícita de tenant en el canal público queda fuera de CU38-CU42.
+    from app.modules.saas.models import Empresa
+
+    empresa = (
+        session.get(Empresa, empresa_id)
+        if empresa_id is not None
+        else session.exec(
+            select(Empresa).where(
+                Empresa.identificador == "fashionstore-principal"
+            )
+        ).first()
+    )
+    if empresa is None:
+        raise HTTPException(
+            status_code=500,
+            detail="La empresa principal no está configurada (ejecutar migraciones)",
+        )
+
     usuario = Usuario(
         nombre=data.nombre,
         apellido=data.apellido,
         email=str(data.email),
         password_hash=hash_password(data.password),
         telefono=data.telefono,
+        empresa_id=empresa.id,
         rol_id=rol_cliente.id,
     )
     session.add(usuario)
@@ -120,8 +143,11 @@ def authenticate(session: Session, email: str, password: str) -> Usuario:
 # --------------------------------------------------------------------------- #
 #  CU3 — Gestionar Usuarios y Roles
 # --------------------------------------------------------------------------- #
-def list_roles(session: Session) -> list[Rol]:
-    return session.exec(select(Rol).order_by(Rol.nombre)).all()
+def list_roles(session: Session, *, incluir_superadmin: bool = False) -> list[Rol]:
+    query = select(Rol)
+    if not incluir_superadmin:
+        query = query.where(Rol.nombre != RolNombre.SUPERADMINISTRADOR)
+    return session.exec(query.order_by(Rol.nombre)).all()
 
 
 def list_usuarios(
@@ -132,8 +158,11 @@ def list_usuarios(
     activo: bool | None = None,
     page: int = 1,
     size: int = 20,
+    empresa_id: int | None = None,
 ) -> tuple[list[Usuario], int]:
     filtros = []
+    if empresa_id is not None:
+        filtros.append(Usuario.empresa_id == empresa_id)
     if q:
         patron = f"%{q.strip().lower()}%"
         filtros.append(
@@ -163,21 +192,30 @@ def list_usuarios(
 
 
 def _validar_rol(session: Session, rol_id: int) -> None:
-    if session.get(Rol, rol_id) is None:
+    rol = session.get(Rol, rol_id)
+    if rol is None:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"El rol {rol_id} no existe",
+        )
+    if rol.nombre == RolNombre.SUPERADMINISTRADOR:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="El rol Superadministrador no se asigna desde la gestión de empresa",
         )
 
 
-def _validar_sucursal(session: Session, sucursal_id: int | None) -> None:
+def _validar_sucursal(
+    session: Session, sucursal_id: int | None, empresa_id: int
+) -> None:
     if sucursal_id is None:
         return
     from app.modules.sucursales.models import Sucursal
 
-    if session.get(Sucursal, sucursal_id) is None:
+    sucursal = session.get(Sucursal, sucursal_id)
+    if sucursal is None or sucursal.empresa_id != empresa_id:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"La sucursal {sucursal_id} no existe",
         )
 
@@ -189,20 +227,26 @@ def _validar_proveedor(session: Session, proveedor_id: int | None) -> None:
 
     if session.get(Proveedor, proveedor_id) is None:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"El proveedor {proveedor_id} no existe",
         )
 
 
-def create_usuario(session: Session, data: UsuarioCreate) -> Usuario:
+def create_usuario(
+    session: Session, data: UsuarioCreate, *, empresa_id: int
+) -> Usuario:
     if get_usuario_by_email(session, data.email):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Ya existe un usuario con ese email",
         )
     _validar_rol(session, data.rol_id)
-    _validar_sucursal(session, data.sucursal_id)
+    _validar_sucursal(session, data.sucursal_id, empresa_id)
     _validar_proveedor(session, data.proveedor_id)
+    from app.modules.saas.models import CodigoLimite
+    from app.modules.saas.service import validar_limite_disponible
+
+    validar_limite_disponible(session, empresa_id, CodigoLimite.MAX_USUARIOS)
 
     usuario = Usuario(
         nombre=data.nombre,
@@ -210,6 +254,7 @@ def create_usuario(session: Session, data: UsuarioCreate) -> Usuario:
         email=str(data.email),
         password_hash=hash_password(data.password),
         telefono=data.telefono,
+        empresa_id=empresa_id,
         rol_id=data.rol_id,
         sucursal_id=data.sucursal_id,
         proveedor_id=data.proveedor_id,
@@ -226,9 +271,12 @@ def update_usuario(
     data: UsuarioUpdate,
     *,
     actor_id: int,
+    empresa_id: int | None,
 ) -> Usuario:
     usuario = session.get(Usuario, usuario_id)
-    if usuario is None:
+    if usuario is None or (
+        empresa_id is not None and usuario.empresa_id != empresa_id
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Usuario no encontrado"
         )
@@ -251,7 +299,9 @@ def update_usuario(
         _validar_rol(session, cambios["rol_id"])
         usuario.rol_id = cambios["rol_id"]
     if "sucursal_id" in cambios:
-        _validar_sucursal(session, cambios["sucursal_id"])
+        if empresa_id is None:
+            raise HTTPException(422, "El actor no tiene una empresa asociada")
+        _validar_sucursal(session, cambios["sucursal_id"], empresa_id)
     if "proveedor_id" in cambios:
         _validar_proveedor(session, cambios["proveedor_id"])
     if "password" in cambios and cambios["password"]:

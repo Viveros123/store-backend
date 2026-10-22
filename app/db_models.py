@@ -12,5 +12,6 @@ from app.modules.productos import models as productos  # noqa: F401
 from app.modules.promociones import models as promociones  # noqa: F401
 from app.modules.proveedores import models as proveedores  # noqa: F401
 from app.modules.reservas import models as reservas  # noqa: F401
+from app.modules.saas import models as saas  # noqa: F401
 from app.modules.sucursales import models as sucursales  # noqa: F401
 from app.modules.ventas import models as ventas  # noqa: F401

@@ -19,8 +19,11 @@ def list_sucursales(
     activa: bool | None = None,
     page: int = 1,
     size: int = 20,
+    empresa_id: int | None = None,
 ) -> tuple[list[Sucursal], int]:
     base = select(Sucursal)
+    if empresa_id is not None:
+        base = base.where(Sucursal.empresa_id == empresa_id)
     if q:
         patron = f"%{q.strip().lower()}%"
         base = base.where(
@@ -41,25 +44,38 @@ def list_sucursales(
     return items, total
 
 
-def opciones(session: Session) -> list[Sucursal]:
+def opciones(session: Session, *, empresa_id: int | None = None) -> list[Sucursal]:
+    query = select(Sucursal)
+    if empresa_id is not None:
+        query = query.where(Sucursal.empresa_id == empresa_id)
     return session.exec(
-        select(Sucursal)
+        query
         .where(Sucursal.activa == True)  # noqa: E712
         .order_by(Sucursal.ciudad, Sucursal.nombre)
     ).all()
 
 
-def get_or_404(session: Session, sucursal_id: int) -> Sucursal:
+def get_or_404(
+    session: Session, sucursal_id: int, *, empresa_id: int | None = None
+) -> Sucursal:
     sucursal = session.get(Sucursal, sucursal_id)
-    if sucursal is None:
+    if sucursal is None or (
+        empresa_id is not None and sucursal.empresa_id != empresa_id
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Sucursal no encontrada"
         )
     return sucursal
 
 
-def create_sucursal(session: Session, data: SucursalCreate) -> Sucursal:
-    sucursal = Sucursal(**data.model_dump())
+def create_sucursal(
+    session: Session, data: SucursalCreate, *, empresa_id: int
+) -> Sucursal:
+    from app.modules.saas.models import CodigoLimite
+    from app.modules.saas.service import validar_limite_disponible
+
+    validar_limite_disponible(session, empresa_id, CodigoLimite.MAX_SUCURSALES)
+    sucursal = Sucursal(empresa_id=empresa_id, **data.model_dump())
     session.add(sucursal)
     session.commit()
     session.refresh(sucursal)
@@ -67,9 +83,13 @@ def create_sucursal(session: Session, data: SucursalCreate) -> Sucursal:
 
 
 def update_sucursal(
-    session: Session, sucursal_id: int, data: SucursalUpdate
+    session: Session,
+    sucursal_id: int,
+    data: SucursalUpdate,
+    *,
+    empresa_id: int | None = None,
 ) -> Sucursal:
-    sucursal = get_or_404(session, sucursal_id)
+    sucursal = get_or_404(session, sucursal_id, empresa_id=empresa_id)
     for campo, valor in data.model_dump(exclude_unset=True).items():
         setattr(sucursal, campo, valor)
     session.add(sucursal)
@@ -81,8 +101,10 @@ def update_sucursal(
 # --------------------------------------------------------------------------- #
 #  CU16 — Horarios de atención (para reservas)
 # --------------------------------------------------------------------------- #
-def get_horarios(session: Session, sucursal_id: int) -> list[SucursalHorario]:
-    get_or_404(session, sucursal_id)
+def get_horarios(
+    session: Session, sucursal_id: int, *, empresa_id: int | None = None
+) -> list[SucursalHorario]:
+    get_or_404(session, sucursal_id, empresa_id=empresa_id)
     filas = session.exec(
         select(SucursalHorario)
         .where(SucursalHorario.sucursal_id == sucursal_id)
@@ -100,9 +122,13 @@ def get_horarios(session: Session, sucursal_id: int) -> list[SucursalHorario]:
 
 
 def set_horarios(
-    session: Session, sucursal_id: int, data: HorarioSemana
+    session: Session,
+    sucursal_id: int,
+    data: HorarioSemana,
+    *,
+    empresa_id: int | None = None,
 ) -> list[SucursalHorario]:
-    get_or_404(session, sucursal_id)
+    get_or_404(session, sucursal_id, empresa_id=empresa_id)
     dias_vistos = {d.dia_semana for d in data.dias}
     if dias_vistos != set(range(7)):
         raise HTTPException(422, "Hay que mandar los 7 días de la semana, sin repetir")
@@ -126,7 +152,7 @@ def set_horarios(
     ]
     session.add_all(nuevas)
     session.commit()
-    return get_horarios(session, sucursal_id)
+    return get_horarios(session, sucursal_id, empresa_id=empresa_id)
 
 
 def horario_del_dia(session: Session, sucursal_id: int, dia_semana: int) -> HorarioDia:

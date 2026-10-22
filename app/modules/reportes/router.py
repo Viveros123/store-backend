@@ -23,7 +23,14 @@ def reporte_ventas(  # CU31
     fecha_hasta: date | None = None,
     sucursal_id: int | None = None,
 ):
-    return service.reporte_ventas(session, admin.id, fecha_desde, fecha_hasta, sucursal_id)
+    return service.reporte_ventas(
+        session,
+        admin.id,
+        fecha_desde,
+        fecha_hasta,
+        sucursal_id,
+        empresa_id=admin.empresa_id,
+    )
 
 
 @router.get("/inventario", response_model=ReporteInventarioOut)
@@ -33,4 +40,10 @@ def reporte_inventario(  # CU31
     sucursal_id: int | None = None,
     umbral: int = Query(default=3, ge=0, le=1000),
 ):
-    return service.reporte_inventario(session, admin.id, sucursal_id, umbral)
+    return service.reporte_inventario(
+        session,
+        admin.id,
+        sucursal_id,
+        umbral,
+        empresa_id=admin.empresa_id,
+    )

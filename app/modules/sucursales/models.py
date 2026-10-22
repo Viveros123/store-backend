@@ -9,6 +9,7 @@ class Sucursal(SQLModel, table=True):
     __tablename__ = "sucursal"
 
     id: int | None = Field(default=None, primary_key=True)
+    empresa_id: int = Field(foreign_key="empresa.id", index=True)
     nombre: str = Field(max_length=100, index=True)
     ciudad: str = Field(max_length=80, index=True)
     direccion: str = Field(max_length=150)

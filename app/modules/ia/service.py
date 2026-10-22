@@ -19,7 +19,10 @@ from app.modules.ia.models import (
 )
 from app.modules.inventario.models import Inventario
 from app.modules.productos.models import Producto, ProductoVariante
-from app.modules.productos.service import _catalogo_producto_out
+from app.modules.productos.service import (
+    _catalogo_producto_out,
+    _productos_de_empresa_ids,
+)
 from app.modules.promociones import service as promociones_service
 from app.modules.sucursales.models import Sucursal
 from app.modules.ventas import service as ventas_service
@@ -49,19 +52,29 @@ def _categorias_compradas(session: Session, cliente_id: int) -> list[str]:
     categorias = session.exec(select(Categoria).where(Categoria.id.in_(ids))).all()
     return [c.nombre for c in categorias]
 
-
-def _catalogo_para_ia(session: Session, limite: int = 60) -> list[Producto]:
+# lista de hasta 60 productos para que la ia peuda elegir entre ellos
+def _catalogo_para_ia(
+    session: Session, empresa_id: int, limite: int = 60
+) -> list[Producto]:
     return session.exec(
         select(Producto)
-        .where(Producto.activo == True, Producto.precio_base.is_not(None))  # noqa: E712
+        .where(
+            Producto.activo == True,  # noqa: E712
+            Producto.precio_base.is_not(None),
+            Producto.id.in_(_productos_de_empresa_ids(empresa_id)),
+        )
         .order_by(Producto.fecha_creacion.desc())
         .limit(limite)
     ).all()
 
 
-def recomendar_productos(session: Session, cliente_id: int) -> list[dict]:
+def recomendar_productos(
+    session: Session, cliente_id: int, *, empresa_id: int | None
+) -> list[dict]:
+    if empresa_id is None:
+        raise HTTPException(403, "El cliente no está asociado a una empresa")
     categorias_previas = _categorias_compradas(session, cliente_id)
-    candidatos = _catalogo_para_ia(session)
+    candidatos = _catalogo_para_ia(session, empresa_id)
 
     if not candidatos:
         return []
@@ -133,7 +146,7 @@ def recomendar_productos(session: Session, cliente_id: int) -> list[dict]:
 
 
 def _variantes_por_producto(
-    session: Session, producto_ids: list[int]
+    session: Session, producto_ids: list[int], *, empresa_id: int
 ) -> dict[int, list[dict]]:
     """Variantes reales (talla+color+id) de cada producto, con las sucursales
     donde hay stock — así el chatbot puede responder qué talla/color tiene
@@ -155,7 +168,10 @@ def _variantes_por_producto(
         .join(Color, Color.id == ProductoVariante.color_id)
         .outerjoin(Inventario, Inventario.variante_id == ProductoVariante.id)
         .outerjoin(Sucursal, Sucursal.id == Inventario.sucursal_id)
-        .where(ProductoVariante.producto_id.in_(producto_ids))
+        .where(
+            ProductoVariante.producto_id.in_(producto_ids),
+            Sucursal.empresa_id == empresa_id,
+        )
     ).all()
 
     agrupado: dict[int, dict[int, dict]] = {}
@@ -182,11 +198,18 @@ def _variantes_por_producto(
 #  CU30 — Consultar Asistente Virtual (Chatbot)
 # --------------------------------------------------------------------------- #
 def chat_asistente(
-    session: Session, cliente_id: int, mensaje: str, historial: list[dict]
+    session: Session,
+    cliente_id: int,
+    mensaje: str,
+    historial: list[dict],
+    *,
+    empresa_id: int | None,
 ) -> dict:
-    candidatos = _catalogo_para_ia(session, limite=40)
+    if empresa_id is None:
+        raise HTTPException(403, "El cliente no está asociado a una empresa")
+    candidatos = _catalogo_para_ia(session, empresa_id, limite=40)
     variantes_por_producto = _variantes_por_producto(
-        session, [p.id for p in candidatos]
+        session, [p.id for p in candidatos], empresa_id=empresa_id
     )
     promos_por_producto = promociones_service.promos_vigentes_por_producto(
         session, [p.id for p in candidatos]

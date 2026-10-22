@@ -5,7 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.security import OAuth2PasswordRequestForm
 
-from app.core.deps import CurrentUser, SessionDep, require_roles
+from app.core.deps import AuthenticatedUser, CurrentUser, SessionDep, require_roles
 from app.core.security import create_access_token
 from app.modules.identidad import service
 from app.modules.identidad.models import RolNombre, Usuario
@@ -59,7 +59,7 @@ def login(  # CU2 (base)
 
 
 @router.get("/auth/me", response_model=UsuarioOut, tags=["auth"])
-def me(current: CurrentUser, session: SessionDep):  # CU2
+def me(current: AuthenticatedUser, session: SessionDep):  # CU2
     return service.to_usuario_out(session, current)
 
 
@@ -96,7 +96,7 @@ def listar_roles(session: SessionDep, _: CurrentUser):  # CU3
 @router.get("/usuarios", response_model=UsuarioPage, tags=["identidad"])
 def listar_usuarios(  # CU3
     session: SessionDep,
-    _admin: AdminUser,
+    admin: AdminUser,
     q: str | None = Query(default=None, description="Busca en nombre, apellido o email"),
     rol_id: int | None = None,
     activo: bool | None = None,
@@ -104,7 +104,13 @@ def listar_usuarios(  # CU3
     size: int = Query(default=20, ge=1, le=100),
 ):
     items, total = service.list_usuarios(
-        session, q=q, rol_id=rol_id, activo=activo, page=page, size=size
+        session,
+        q=q,
+        rol_id=rol_id,
+        activo=activo,
+        page=page,
+        size=size,
+        empresa_id=admin.empresa_id,
     )
     return UsuarioPage(
         items=[service.to_usuario_out(session, u) for u in items],
@@ -115,9 +121,11 @@ def listar_usuarios(  # CU3
 
 
 @router.get("/usuarios/{usuario_id}", response_model=UsuarioOut, tags=["identidad"])
-def obtener_usuario(usuario_id: int, session: SessionDep, _admin: AdminUser):  # CU3
+def obtener_usuario(usuario_id: int, session: SessionDep, admin: AdminUser):  # CU3
     usuario = session.get(Usuario, usuario_id)
-    if usuario is None:
+    if usuario is None or (
+        admin.empresa_id is not None and usuario.empresa_id != admin.empresa_id
+    ):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Usuario no encontrado")
     return service.to_usuario_out(session, usuario)
 
@@ -128,8 +136,10 @@ def obtener_usuario(usuario_id: int, session: SessionDep, _admin: AdminUser):  #
     status_code=status.HTTP_201_CREATED,
     tags=["identidad"],
 )
-def crear_usuario(data: UsuarioCreate, session: SessionDep, _admin: AdminUser):  # CU3
-    usuario = service.create_usuario(session, data)
+def crear_usuario(data: UsuarioCreate, session: SessionDep, admin: AdminUser):  # CU3
+    if admin.empresa_id is None:
+        raise HTTPException(422, "El administrador no tiene una empresa asociada")
+    usuario = service.create_usuario(session, data, empresa_id=admin.empresa_id)
     return service.to_usuario_out(session, usuario)
 
 
@@ -140,5 +150,11 @@ def actualizar_usuario(  # CU3
     session: SessionDep,
     admin: AdminUser,
 ):
-    usuario = service.update_usuario(session, usuario_id, data, actor_id=admin.id)
+    usuario = service.update_usuario(
+        session,
+        usuario_id,
+        data,
+        actor_id=admin.id,
+        empresa_id=admin.empresa_id,
+    )
     return service.to_usuario_out(session, usuario)

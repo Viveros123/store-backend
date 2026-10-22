@@ -9,6 +9,7 @@ class SucursalOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    empresa_id: int
     nombre: str
     ciudad: str
     direccion: str

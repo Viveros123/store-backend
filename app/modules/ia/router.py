@@ -24,14 +24,20 @@ AdminUser = Annotated[Usuario, Depends(require_roles(RolNombre.ADMINISTRADOR))]
 
 @router.get("/recomendaciones", response_model=RecomendacionesOut)
 def recomendaciones(session: SessionDep, user: ClienteUser):  # CU29
-    items = service.recomendar_productos(session, user.id)
+    items = service.recomendar_productos(
+        session, user.id, empresa_id=user.empresa_id
+    )
     return RecomendacionesOut(items=items)
 
 
 @router.post("/chat", response_model=ChatOut)
 def chat(data: ChatIn, session: SessionDep, user: ClienteUser):  # CU30
     resultado = service.chat_asistente(
-        session, user.id, data.mensaje, [h.model_dump() for h in data.historial]
+        session,
+        user.id,
+        data.mensaje,
+        [h.model_dump() for h in data.historial],
+        empresa_id=user.empresa_id,
     )
     return ChatOut(**resultado)
 

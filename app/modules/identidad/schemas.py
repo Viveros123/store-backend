@@ -24,6 +24,7 @@ class UsuarioOut(BaseModel):
     telefono: str | None
     rol_id: int
     rol: str | None = None
+    empresa_id: int | None
     sucursal_id: int | None
     proveedor_id: int | None
     activo: bool

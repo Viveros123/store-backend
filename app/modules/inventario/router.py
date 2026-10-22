@@ -52,6 +52,7 @@ def listar(  # CU13
         sucursal_id=sucursal_id,
         q=q,
         sucursal_permitida=sucursal_permitida,
+        empresa_id=user.empresa_id,
         page=page,
         size=size,
     )
@@ -63,7 +64,12 @@ def ajustar(  # CU13
     data: InventarioAjuste, session: SessionDep, user: AdminOEncargado
 ):
     sucursal_permitida = _sucursal_permitida(session, user)
-    return service.ajustar_stock(session, data, sucursal_permitida=sucursal_permitida)
+    return service.ajustar_stock(
+        session,
+        data,
+        sucursal_permitida=sucursal_permitida,
+        empresa_id=user.empresa_id,
+    )
 
 
 @router.get("/movimientos", response_model=MovimientoInventarioPage)
@@ -81,6 +87,7 @@ def listar_movimientos(  # CU14
         sucursal_id=sucursal_id,
         variante_id=variante_id,
         sucursal_permitida=sucursal_permitida,
+        empresa_id=user.empresa_id,
         page=page,
         size=size,
     )
@@ -97,5 +104,9 @@ def registrar_movimiento(  # CU14
 ):
     sucursal_permitida = _sucursal_permitida(session, user)
     return service.registrar_ingreso(
-        session, data, user.id, sucursal_permitida=sucursal_permitida
+        session,
+        data,
+        user.id,
+        sucursal_permitida=sucursal_permitida,
+        empresa_id=user.empresa_id,
     )

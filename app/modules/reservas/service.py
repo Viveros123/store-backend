@@ -33,9 +33,15 @@ def _a_hora(minutos: int) -> time:
     return time(hour=minutos // 60, minute=minutos % 60)
 
 
-def _get_sucursal_activa(session: Session, sucursal_id: int) -> Sucursal:
+def _get_sucursal_activa(
+    session: Session, sucursal_id: int, empresa_id: int | None = None
+) -> Sucursal:
     sucursal = session.get(Sucursal, sucursal_id)
-    if sucursal is None or not sucursal.activa:
+    if (
+        sucursal is None
+        or not sucursal.activa
+        or (empresa_id is not None and sucursal.empresa_id != empresa_id)
+    ):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Sucursal no encontrada")
     return sucursal
 
@@ -56,11 +62,16 @@ def _reservas_activas_del_dia(
 #  Consultar turnos libres
 # --------------------------------------------------------------------------- #
 def slots_disponibles(
-    session: Session, sucursal_id: int, fecha: date, duracion_minutos: int
+    session: Session,
+    sucursal_id: int,
+    fecha: date,
+    duracion_minutos: int,
+    *,
+    empresa_id: int | None = None,
 ) -> SlotsDisponibilidad:
     if duracion_minutos not in DURACIONES_VALIDAS:
         raise HTTPException(422, "La duración del turno debe ser 30 o 60 minutos")
-    _get_sucursal_activa(session, sucursal_id)
+    _get_sucursal_activa(session, sucursal_id, empresa_id)
     if fecha < date.today():
         return SlotsDisponibilidad(
             fecha=fecha, duracion_minutos=duracion_minutos, cerrado=True, slots=[]
@@ -144,7 +155,13 @@ def _reserva_out(session: Session, r: Reserva) -> dict:
 # --------------------------------------------------------------------------- #
 #  Crear reserva
 # --------------------------------------------------------------------------- #
-def crear_reserva(session: Session, cliente_id: int, data: ReservaCreate) -> dict:
+def crear_reserva(
+    session: Session,
+    cliente_id: int,
+    data: ReservaCreate,
+    *,
+    empresa_id: int | None = None,
+) -> dict:
     if data.duracion_minutos not in DURACIONES_VALIDAS:
         raise HTTPException(422, "La duración del turno debe ser 30 o 60 minutos")
     if data.hora_inicio.minute not in (0, 30) or data.hora_inicio.second != 0:
@@ -160,7 +177,7 @@ def crear_reserva(session: Session, cliente_id: int, data: ReservaCreate) -> dic
         .with_for_update()
         .execution_options(populate_existing=True)
     ).first()
-    _get_sucursal_activa(session, data.sucursal_id)
+    _get_sucursal_activa(session, data.sucursal_id, empresa_id)
 
     horario = horario_del_dia(session, data.sucursal_id, data.fecha.weekday())
     if horario.cerrado or horario.hora_apertura is None or horario.hora_cierre is None:
@@ -305,7 +322,10 @@ def _reserva_sucursal_out(session: Session, r: Reserva) -> dict:
 
 
 def _reserva_de_sucursal(
-    session: Session, reserva_id: int, sucursal_permitida: int | None
+    session: Session,
+    reserva_id: int,
+    sucursal_permitida: int | None,
+    empresa_id: int | None = None,
 ) -> Reserva:
     reserva = session.get(Reserva, reserva_id)
     if reserva is None:
@@ -314,6 +334,12 @@ def _reserva_de_sucursal(
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, "Esta reserva es de otra sucursal"
         )
+    if empresa_id is not None:
+        sucursal = session.get(Sucursal, reserva.sucursal_id)
+        if sucursal is None or sucursal.empresa_id != empresa_id:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, "Esta reserva pertenece a otra empresa"
+            )
     return reserva
 
 
@@ -323,10 +349,17 @@ def listar_por_sucursal(
     sucursal_id: int | None = None,
     estado: str | None = None,
     sucursal_permitida: int | None = None,
+    empresa_id: int | None = None,
     page: int = 1,
     size: int = 20,
 ) -> tuple[list[dict], int]:
     filtros = []
+    if empresa_id is not None:
+        filtros.append(
+            Reserva.sucursal_id.in_(
+                select(Sucursal.id).where(Sucursal.empresa_id == empresa_id)
+            )
+        )
     if sucursal_permitida is not None:
         filtros.append(Reserva.sucursal_id == sucursal_permitida)
     elif sucursal_id is not None:
@@ -346,11 +379,17 @@ def listar_por_sucursal(
 
 
 def notificar_reserva(
-    session: Session, reserva_id: int, sucursal_permitida: int | None = None
+    session: Session,
+    reserva_id: int,
+    sucursal_permitida: int | None = None,
+    *,
+    empresa_id: int | None = None,
 ) -> dict:
     """CU18 — la sucursal toma conocimiento de la reserva y avisa al cliente
     que ya puede pasar a probarse la prenda."""
-    reserva = _reserva_de_sucursal(session, reserva_id, sucursal_permitida)
+    reserva = _reserva_de_sucursal(
+        session, reserva_id, sucursal_permitida, empresa_id
+    )
     if reserva.estado != EstadoReserva.PENDIENTE:
         raise HTTPException(
             status.HTTP_409_CONFLICT, "Solo se pueden notificar reservas pendientes"
@@ -363,11 +402,17 @@ def notificar_reserva(
 
 
 def recepcionar_reserva(
-    session: Session, reserva_id: int, sucursal_permitida: int | None = None
+    session: Session,
+    reserva_id: int,
+    sucursal_permitida: int | None = None,
+    *,
+    empresa_id: int | None = None,
 ) -> dict:
     """CU19 — el cliente llegó a la sucursal y se le entregó la prenda para
     probarse; queda "atendida" a la espera de la compra (CU21+)."""
-    reserva = _reserva_de_sucursal(session, reserva_id, sucursal_permitida)
+    reserva = _reserva_de_sucursal(
+        session, reserva_id, sucursal_permitida, empresa_id
+    )
     if reserva.estado != EstadoReserva.NOTIFICADA:
         raise HTTPException(
             status.HTTP_409_CONFLICT,
@@ -386,11 +431,15 @@ def finalizar_reserva(
     reserva_id: int,
     data: FinalizarReservaIn,
     sucursal_permitida: int | None = None,
+    *,
+    empresa_id: int | None = None,
 ) -> dict:
     """El cliente ya se probó las prendas: el Encargado indica cuántas unidades
     de cada una se lleva. Lo que devuelve vuelve al stock disponible; lo que se
     lleva genera una venta pendiente que el Cajero cobra en caja."""
-    reserva = _reserva_de_sucursal(session, reserva_id, sucursal_permitida)
+    reserva = _reserva_de_sucursal(
+        session, reserva_id, sucursal_permitida, empresa_id
+    )
     if reserva.estado != EstadoReserva.ATENDIDA:
         raise HTTPException(
             status.HTTP_409_CONFLICT,

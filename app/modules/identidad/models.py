@@ -12,13 +12,21 @@ from sqlmodel import Field, SQLModel
 class RolNombre:
     """Nombres de rol válidos (se siembran en el seed)."""
 
+    SUPERADMINISTRADOR = "Superadministrador"
     CLIENTE = "Cliente"
     ADMINISTRADOR = "Administrador"
     ENCARGADO = "EncargadoSucursal"
     CAJERO = "Cajero"
     PROVEEDOR = "Proveedor"
 
-    TODOS = (CLIENTE, ADMINISTRADOR, ENCARGADO, CAJERO, PROVEEDOR)
+    TODOS = (
+        SUPERADMINISTRADOR,
+        CLIENTE,
+        ADMINISTRADOR,
+        ENCARGADO,
+        CAJERO,
+        PROVEEDOR,
+    )
 
 
 class Rol(SQLModel, table=True):
@@ -38,6 +46,8 @@ class Usuario(SQLModel, table=True):
     password_hash: str = Field(max_length=255)
     telefono: str | None = Field(default=None, max_length=20)
 
+    # NULL únicamente para el Superadministrador de plataforma.
+    empresa_id: int | None = Field(default=None, foreign_key="empresa.id", index=True)
     rol_id: int = Field(foreign_key="rol.id")
     sucursal_id: int | None = Field(default=None, foreign_key="sucursal.id")
     proveedor_id: int | None = Field(default=None, foreign_key="proveedor.id")

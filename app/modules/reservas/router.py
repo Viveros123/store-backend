@@ -43,17 +43,25 @@ def _sucursal_permitida(session: SessionDep, user: Usuario) -> int | None:
 @router.get("/disponibilidad", response_model=SlotsDisponibilidad)
 def disponibilidad(  # CU16
     session: SessionDep,
-    _user: CurrentUser,
+    user: CurrentUser,
     sucursal_id: int,
     fecha: date,
     duracion_minutos: int = Query(default=30),
 ):
-    return service.slots_disponibles(session, sucursal_id, fecha, duracion_minutos)
+    return service.slots_disponibles(
+        session,
+        sucursal_id,
+        fecha,
+        duracion_minutos,
+        empresa_id=user.empresa_id,
+    )
 
 
 @router.post("", response_model=ReservaOut, status_code=status.HTTP_201_CREATED)
 def crear(data: ReservaCreate, session: SessionDep, user: ClienteUser):  # CU16
-    return service.crear_reserva(session, user.id, data)
+    return service.crear_reserva(
+        session, user.id, data, empresa_id=user.empresa_id
+    )
 
 
 @router.get("/mias", response_model=list[ReservaOut])
@@ -81,6 +89,7 @@ def listar_sucursal(  # CU18/19
         sucursal_id=sucursal_id,
         estado=estado,
         sucursal_permitida=sucursal_permitida,
+        empresa_id=user.empresa_id,
         page=page,
         size=size,
     )
@@ -90,13 +99,17 @@ def listar_sucursal(  # CU18/19
 @router.post("/{reserva_id}/notificar", response_model=ReservaSucursalOut)
 def notificar(reserva_id: int, session: SessionDep, user: AdminOEncargado):  # CU18
     sucursal_permitida = _sucursal_permitida(session, user)
-    return service.notificar_reserva(session, reserva_id, sucursal_permitida)
+    return service.notificar_reserva(
+        session, reserva_id, sucursal_permitida, empresa_id=user.empresa_id
+    )
 
 
 @router.post("/{reserva_id}/recepcionar", response_model=ReservaSucursalOut)
 def recepcionar(reserva_id: int, session: SessionDep, user: AdminOEncargado):  # CU19
     sucursal_permitida = _sucursal_permitida(session, user)
-    return service.recepcionar_reserva(session, reserva_id, sucursal_permitida)
+    return service.recepcionar_reserva(
+        session, reserva_id, sucursal_permitida, empresa_id=user.empresa_id
+    )
 
 
 @router.post("/{reserva_id}/finalizar", response_model=FinalizarReservaOut)
@@ -107,4 +120,11 @@ def finalizar(  # CU35
     user: AdminOEncargado,
 ):
     sucursal_permitida = _sucursal_permitida(session, user)
-    return service.finalizar_reserva(session, user, reserva_id, data, sucursal_permitida)
+    return service.finalizar_reserva(
+        session,
+        user,
+        reserva_id,
+        data,
+        sucursal_permitida,
+        empresa_id=user.empresa_id,
+    )

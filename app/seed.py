@@ -25,16 +25,23 @@ def seed_roles(session: Session) -> None:
 
 def seed_admin(session: Session) -> None:
     admin_rol = session.exec(
-        select(Rol).where(Rol.nombre == RolNombre.ADMINISTRADOR)
+        select(Rol).where(Rol.nombre == RolNombre.SUPERADMINISTRADOR)
     ).first()
     if admin_rol is None:
-        raise RuntimeError("Falta el rol Administrador; corré seed_roles primero.")
+        raise RuntimeError("Falta el rol Superadministrador; corré seed_roles primero.")
 
     ya_existe = session.exec(
         select(Usuario).where(Usuario.email == settings.first_admin_email)
     ).first()
     if ya_existe:
-        print(f"Admin '{settings.first_admin_email}' ya existe.")
+        if ya_existe.rol_id != admin_rol.id or ya_existe.empresa_id is not None:
+            ya_existe.rol_id = admin_rol.id
+            ya_existe.empresa_id = None
+            session.add(ya_existe)
+            session.commit()
+            print(f"Usuario '{settings.first_admin_email}' promovido a Superadministrador.")
+        else:
+            print(f"Superadministrador '{settings.first_admin_email}' ya existe.")
         return
 
     session.add(
@@ -47,7 +54,7 @@ def seed_admin(session: Session) -> None:
         )
     )
     session.commit()
-    print(f"Admin '{settings.first_admin_email}' creado.")
+    print(f"Superadministrador '{settings.first_admin_email}' creado.")
 
 
 def main() -> None:

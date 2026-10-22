@@ -81,7 +81,7 @@ def estado_pago(venta_id: int, session: SessionDep, user: ClienteUser):  # CU28
 def buscar_clientes(session: SessionDep, cajero: CajeroUser, q: str = ""):
     # q vacío = listado por defecto (para mostrar clientes recientes como
     # ayuda antes de escribir nada), igual que con las prendas.
-    usuarios = service.buscar_clientes(session, q)
+    usuarios = service.buscar_clientes(session, q, empresa_id=cajero.empresa_id)
     return [
         ClienteBuscarOut(
             id=u.id,
@@ -100,7 +100,9 @@ def buscar_clientes(session: SessionDep, cajero: CajeroUser, q: str = ""):
 def registrar_cliente_rapido(
     data: ClienteRegistroIn, session: SessionDep, cajero: CajeroUser
 ):
-    usuario = service.registrar_cliente_rapido(session, data)
+    usuario = service.registrar_cliente_rapido(
+        session, data, empresa_id=cajero.empresa_id
+    )
     return ClienteBuscarOut(
         id=usuario.id,
         nombre=usuario.nombre,
@@ -166,6 +168,7 @@ def listar_ventas_sucursal(
         sucursal_id=sucursal_id,
         estado=estado,
         sucursal_permitida=sucursal_permitida,
+        empresa_id=user.empresa_id,
         page=page,
         size=size,
     )

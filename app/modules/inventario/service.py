@@ -46,10 +46,17 @@ def list_inventario(
     sucursal_id: int | None = None,
     q: str | None = None,
     sucursal_permitida: int | None = None,
+    empresa_id: int | None = None,
     page: int = 1,
     size: int = 20,
 ) -> tuple[list[dict], int]:
     filtros = []
+    if empresa_id is not None:
+        filtros.append(
+            Inventario.sucursal_id.in_(
+                select(Sucursal.id).where(Sucursal.empresa_id == empresa_id)
+            )
+        )
     if sucursal_permitida is not None:
         filtros.append(Inventario.sucursal_id == sucursal_permitida)
     elif sucursal_id is not None:
@@ -80,11 +87,18 @@ def list_inventario(
 
 
 def ajustar_stock(
-    session: Session, data: InventarioAjuste, *, sucursal_permitida: int | None = None
+    session: Session,
+    data: InventarioAjuste,
+    *,
+    sucursal_permitida: int | None = None,
+    empresa_id: int | None = None,
 ) -> dict:
     if session.get(ProductoVariante, data.variante_id) is None:
         raise HTTPException(422, "La variante no existe")
-    if session.get(Sucursal, data.sucursal_id) is None:
+    sucursal = session.get(Sucursal, data.sucursal_id)
+    if sucursal is None or (
+        empresa_id is not None and sucursal.empresa_id != empresa_id
+    ):
         raise HTTPException(422, "La sucursal no existe")
     if sucursal_permitida is not None and data.sucursal_id != sucursal_permitida:
         raise HTTPException(
@@ -113,7 +127,9 @@ def ajustar_stock(
     return _inventario_out(session, inv)
 
 
-def disponibilidad_variante(session: Session, variante_id: int) -> list[dict]:
+def disponibilidad_variante(
+    session: Session, variante_id: int, *, empresa_id: int
+) -> list[dict]:
     """CU12 — sucursales con stock de una variante concreta."""
     filas = session.exec(
         select(Inventario, Sucursal)
@@ -122,6 +138,7 @@ def disponibilidad_variante(session: Session, variante_id: int) -> list[dict]:
             Inventario.variante_id == variante_id,
             Inventario.cantidad_disponible > 0,
             Sucursal.activa == True,  # noqa: E712
+            Sucursal.empresa_id == empresa_id,
         )
     ).all()
     return [
@@ -173,6 +190,7 @@ def registrar_ingreso(
     usuario_id: int,
     *,
     sucursal_permitida: int | None = None,
+    empresa_id: int | None = None,
 ) -> dict:
     """CU14: registra la recepción de mercadería del proveedor.
 
@@ -181,7 +199,10 @@ def registrar_ingreso(
     """
     if session.get(ProductoVariante, data.variante_id) is None:
         raise HTTPException(422, "La variante no existe")
-    if session.get(Sucursal, data.sucursal_id) is None:
+    sucursal = session.get(Sucursal, data.sucursal_id)
+    if sucursal is None or (
+        empresa_id is not None and sucursal.empresa_id != empresa_id
+    ):
         raise HTTPException(422, "La sucursal no existe")
     if sucursal_permitida is not None and data.sucursal_id != sucursal_permitida:
         raise HTTPException(
@@ -234,10 +255,17 @@ def list_movimientos(
     sucursal_id: int | None = None,
     variante_id: int | None = None,
     sucursal_permitida: int | None = None,
+    empresa_id: int | None = None,
     page: int = 1,
     size: int = 20,
 ) -> tuple[list[dict], int]:
     filtros = []
+    if empresa_id is not None:
+        filtros.append(
+            MovimientoInventario.sucursal_id.in_(
+                select(Sucursal.id).where(Sucursal.empresa_id == empresa_id)
+            )
+        )
     if sucursal_permitida is not None:
         filtros.append(MovimientoInventario.sucursal_id == sucursal_permitida)
     elif sucursal_id is not None:
