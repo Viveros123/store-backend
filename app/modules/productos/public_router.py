@@ -40,18 +40,22 @@ def _empresa_catalogo_id(
 
 
 @router.get("/categorias", response_model=list[CategoriaOut])
-def categorias(session: SessionDep):  # CU9
-    return categorias_opciones(session)
+def categorias(session: SessionDep, usuario: OptionalAuthenticatedUser):  # CU9
+    return categorias_opciones(
+        session, empresa_id=_empresa_catalogo_id(session, usuario)
+    )
 
 
 @router.get("/tallas", response_model=list[TallaOut])
-def tallas(session: SessionDep):  # CU10
-    return tallas_opciones(session)
+def tallas(session: SessionDep, usuario: OptionalAuthenticatedUser):  # CU10
+    return tallas_opciones(session, empresa_id=_empresa_catalogo_id(session, usuario))
 
 
 @router.get("/colores", response_model=list[ColorOut])
-def colores(session: SessionDep):  # CU10
-    return colores_opciones(session)
+def colores(session: SessionDep, usuario: OptionalAuthenticatedUser):  # CU10
+    return colores_opciones(
+        session, empresa_id=_empresa_catalogo_id(session, usuario)
+    )
 
 
 @router.get("/destacados", response_model=list[CatalogoProductoOut])

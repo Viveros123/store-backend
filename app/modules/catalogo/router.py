@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 
 from app.core.deps import CurrentUser, SessionDep, require_roles
+from app.core.tenant import empresa_actual_id
 from app.modules.catalogo import service
 from app.modules.catalogo.schemas import (
     CategoriaCreate,
@@ -39,21 +40,21 @@ AdminUser = Annotated[Usuario, Depends(require_roles(RolNombre.ADMINISTRADOR))]
 #  Categorías
 # --------------------------------------------------------------------------- #
 @router.get("/categorias/opciones", response_model=list[CategoriaOut])
-def categorias_opciones(session: SessionDep, _: CurrentUser):  # CU5
-    return service.categorias_opciones(session)
+def categorias_opciones(session: SessionDep, user: CurrentUser):  # CU5
+    return service.categorias_opciones(session, empresa_id=empresa_actual_id(user))
 
 
 @router.get("/categorias", response_model=CategoriaPage)
 def listar_categorias(  # CU5
     session: SessionDep,
-    _admin: AdminUser,
+    admin: AdminUser,
     q: str | None = None,
     activo: bool | None = None,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
     items, total = service.list_categorias(
-        session, q=q, activo=activo, page=page, size=size
+        session, empresa_id=empresa_actual_id(admin), q=q, activo=activo, page=page, size=size
     )
     return CategoriaPage(
         items=[CategoriaOut.model_validate(x) for x in items],
@@ -66,29 +67,29 @@ def listar_categorias(  # CU5
 @router.post(
     "/categorias", response_model=CategoriaOut, status_code=status.HTTP_201_CREATED
 )
-def crear_categoria(data: CategoriaCreate, session: SessionDep, _admin: AdminUser):  # CU5
-    return service.create_categoria(session, data)
+def crear_categoria(data: CategoriaCreate, session: SessionDep, admin: AdminUser):  # CU5
+    return service.create_categoria(session, data, empresa_id=empresa_actual_id(admin))
 
 
 @router.patch("/categorias/{cat_id}", response_model=CategoriaOut)
 def actualizar_categoria(  # CU5
-    cat_id: int, data: CategoriaUpdate, session: SessionDep, _admin: AdminUser
+    cat_id: int, data: CategoriaUpdate, session: SessionDep, admin: AdminUser
 ):
-    return service.update_categoria(session, cat_id, data)
+    return service.update_categoria(session, cat_id, data, empresa_id=empresa_actual_id(admin))
 
 
 # --------------------------------------------------------------------------- #
 #  Tallas
 # --------------------------------------------------------------------------- #
 @router.get("/tallas/opciones", response_model=list[TallaOut])
-def tallas_opciones(session: SessionDep, _: CurrentUser):  # CU5
-    return service.tallas_opciones(session)
+def tallas_opciones(session: SessionDep, user: CurrentUser):  # CU5
+    return service.tallas_opciones(session, empresa_id=empresa_actual_id(user))
 
 
 @router.get("/tallas", response_model=TallaPage)
 def listar_tallas(  # CU5
     session: SessionDep,
-    _admin: AdminUser,
+    admin: AdminUser,
     q: str | None = None,
     tipo: str | None = None,
     activo: bool | None = None,
@@ -96,7 +97,7 @@ def listar_tallas(  # CU5
     size: int = Query(20, ge=1, le=100),
 ):
     items, total = service.list_tallas(
-        session, q=q, tipo=tipo, activo=activo, page=page, size=size
+        session, empresa_id=empresa_actual_id(admin), q=q, tipo=tipo, activo=activo, page=page, size=size
     )
     return TallaPage(
         items=[TallaOut.model_validate(x) for x in items],
@@ -107,36 +108,36 @@ def listar_tallas(  # CU5
 
 
 @router.post("/tallas", response_model=TallaOut, status_code=status.HTTP_201_CREATED)
-def crear_talla(data: TallaCreate, session: SessionDep, _admin: AdminUser):  # CU5
-    return service.create_talla(session, data)
+def crear_talla(data: TallaCreate, session: SessionDep, admin: AdminUser):  # CU5
+    return service.create_talla(session, data, empresa_id=empresa_actual_id(admin))
 
 
 @router.patch("/tallas/{talla_id}", response_model=TallaOut)
 def actualizar_talla(  # CU5
-    talla_id: int, data: TallaUpdate, session: SessionDep, _admin: AdminUser
+    talla_id: int, data: TallaUpdate, session: SessionDep, admin: AdminUser
 ):
-    return service.update_talla(session, talla_id, data)
+    return service.update_talla(session, talla_id, data, empresa_id=empresa_actual_id(admin))
 
 
 # --------------------------------------------------------------------------- #
 #  Colores
 # --------------------------------------------------------------------------- #
 @router.get("/colores/opciones", response_model=list[ColorOut])
-def colores_opciones(session: SessionDep, _: CurrentUser):  # CU5
-    return service.colores_opciones(session)
+def colores_opciones(session: SessionDep, user: CurrentUser):  # CU5
+    return service.colores_opciones(session, empresa_id=empresa_actual_id(user))
 
 
 @router.get("/colores", response_model=ColorPage)
 def listar_colores(  # CU5
     session: SessionDep,
-    _admin: AdminUser,
+    admin: AdminUser,
     q: str | None = None,
     activo: bool | None = None,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
     items, total = service.list_colores(
-        session, q=q, activo=activo, page=page, size=size
+        session, empresa_id=empresa_actual_id(admin), q=q, activo=activo, page=page, size=size
     )
     return ColorPage(
         items=[ColorOut.model_validate(x) for x in items],
@@ -147,36 +148,36 @@ def listar_colores(  # CU5
 
 
 @router.post("/colores", response_model=ColorOut, status_code=status.HTTP_201_CREATED)
-def crear_color(data: ColorCreate, session: SessionDep, _admin: AdminUser):  # CU5
-    return service.create_color(session, data)
+def crear_color(data: ColorCreate, session: SessionDep, admin: AdminUser):  # CU5
+    return service.create_color(session, data, empresa_id=empresa_actual_id(admin))
 
 
 @router.patch("/colores/{color_id}", response_model=ColorOut)
 def actualizar_color(  # CU5
-    color_id: int, data: ColorUpdate, session: SessionDep, _admin: AdminUser
+    color_id: int, data: ColorUpdate, session: SessionDep, admin: AdminUser
 ):
-    return service.update_color(session, color_id, data)
+    return service.update_color(session, color_id, data, empresa_id=empresa_actual_id(admin))
 
 
 # --------------------------------------------------------------------------- #
 #  CU6 — Temporadas
 # --------------------------------------------------------------------------- #
 @router.get("/temporadas/opciones", response_model=list[TemporadaOut])
-def temporadas_opciones(session: SessionDep, _: CurrentUser):  # CU6
-    return service.temporadas_opciones(session)
+def temporadas_opciones(session: SessionDep, user: CurrentUser):  # CU6
+    return service.temporadas_opciones(session, empresa_id=empresa_actual_id(user))
 
 
 @router.get("/temporadas", response_model=TemporadaPage)
 def listar_temporadas(  # CU6
     session: SessionDep,
-    _admin: AdminUser,
+    admin: AdminUser,
     q: str | None = None,
     activo: bool | None = None,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
 ):
     items, total = service.list_temporadas(
-        session, q=q, activo=activo, page=page, size=size
+        session, empresa_id=empresa_actual_id(admin), q=q, activo=activo, page=page, size=size
     )
     return TemporadaPage(
         items=[TemporadaOut.model_validate(x) for x in items],
@@ -189,15 +190,15 @@ def listar_temporadas(  # CU6
 @router.post(
     "/temporadas", response_model=TemporadaOut, status_code=status.HTTP_201_CREATED
 )
-def crear_temporada(data: TemporadaCreate, session: SessionDep, _admin: AdminUser):  # CU6
-    return service.create_temporada(session, data)
+def crear_temporada(data: TemporadaCreate, session: SessionDep, admin: AdminUser):  # CU6
+    return service.create_temporada(session, data, empresa_id=empresa_actual_id(admin))
 
 
 @router.patch("/temporadas/{temp_id}", response_model=TemporadaOut)
 def actualizar_temporada(  # CU6
-    temp_id: int, data: TemporadaUpdate, session: SessionDep, _admin: AdminUser
+    temp_id: int, data: TemporadaUpdate, session: SessionDep, admin: AdminUser
 ):
-    return service.update_temporada(session, temp_id, data)
+    return service.update_temporada(session, temp_id, data, empresa_id=empresa_actual_id(admin))
 
 
 # --------------------------------------------------------------------------- #
@@ -205,15 +206,17 @@ def actualizar_temporada(  # CU6
 # --------------------------------------------------------------------------- #
 @router.get("/colecciones/opciones", response_model=list[ColeccionOut])
 def colecciones_opciones(  # CU6
-    session: SessionDep, _: CurrentUser, temporada_id: int | None = None
+    session: SessionDep, user: CurrentUser, temporada_id: int | None = None
 ):
-    return service.colecciones_opciones(session, temporada_id)
+    return service.colecciones_opciones(
+        session, temporada_id, empresa_id=empresa_actual_id(user)
+    )
 
 
 @router.get("/colecciones", response_model=ColeccionPage)
 def listar_colecciones(  # CU6
     session: SessionDep,
-    _admin: AdminUser,
+    admin: AdminUser,
     q: str | None = None,
     temporada_id: int | None = None,
     activo: bool | None = None,
@@ -221,7 +224,7 @@ def listar_colecciones(  # CU6
     size: int = Query(20, ge=1, le=100),
 ):
     items, total = service.list_colecciones(
-        session, q=q, temporada_id=temporada_id, activo=activo, page=page, size=size
+        session, empresa_id=empresa_actual_id(admin), q=q, temporada_id=temporada_id, activo=activo, page=page, size=size
     )
     return ColeccionPage(items=items, total=total, page=page, size=size)
 
@@ -229,12 +232,12 @@ def listar_colecciones(  # CU6
 @router.post(
     "/colecciones", response_model=ColeccionOut, status_code=status.HTTP_201_CREATED
 )
-def crear_coleccion(data: ColeccionCreate, session: SessionDep, _admin: AdminUser):  # CU6
-    return service.create_coleccion(session, data)
+def crear_coleccion(data: ColeccionCreate, session: SessionDep, admin: AdminUser):  # CU6
+    return service.create_coleccion(session, data, empresa_id=empresa_actual_id(admin))
 
 
 @router.patch("/colecciones/{col_id}", response_model=ColeccionOut)
 def actualizar_coleccion(  # CU6
-    col_id: int, data: ColeccionUpdate, session: SessionDep, _admin: AdminUser
+    col_id: int, data: ColeccionUpdate, session: SessionDep, admin: AdminUser
 ):
-    return service.update_coleccion(session, col_id, data)
+    return service.update_coleccion(session, col_id, data, empresa_id=empresa_actual_id(admin))

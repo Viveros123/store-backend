@@ -40,6 +40,7 @@ from app.modules.catalogo.router import router as catalogo_router  # noqa: E402
 from app.modules.ia.router import router as ia_router  # noqa: E402
 from app.modules.identidad.router import router as identidad_router  # noqa: E402
 from app.modules.inventario.router import router as inventario_router  # noqa: E402
+from app.modules.offline.router import router as offline_router  # noqa: E402
 from app.modules.productos.router import router as productos_router  # noqa: E402
 from app.modules.productos.portal_router import (  # noqa: E402
     router as portal_proveedor_router,
@@ -64,6 +65,7 @@ app.include_router(productos_router)
 app.include_router(portal_proveedor_router)
 app.include_router(catalogo_publico_router)
 app.include_router(inventario_router)
+app.include_router(offline_router)
 app.include_router(reservas_router)
 app.include_router(carrito_router)
 app.include_router(ventas_router)

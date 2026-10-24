@@ -14,6 +14,7 @@ class Producto(SQLModel, table=True):
     __tablename__ = "producto"
 
     id: int | None = Field(default=None, primary_key=True)
+    empresa_id: int = Field(foreign_key="empresa.id", index=True)
     nombre: str = Field(max_length=120, index=True)
     descripcion: str | None = Field(default=None, max_length=1000)
 
@@ -43,14 +44,16 @@ class ProductoVariante(SQLModel, table=True):
         UniqueConstraint(
             "producto_id", "talla_id", "color_id", name="uq_variante_prod_talla_color"
         ),
+        UniqueConstraint("empresa_id", "sku", name="uq_variante_empresa_sku"),
     )
 
     id: int | None = Field(default=None, primary_key=True)
+    empresa_id: int = Field(foreign_key="empresa.id", index=True)
     producto_id: int = Field(foreign_key="producto.id")
     talla_id: int = Field(foreign_key="talla.id")
     color_id: int = Field(foreign_key="color.id")
 
-    sku: str = Field(max_length=50, unique=True, index=True)
+    sku: str = Field(max_length=50, index=True)
     # Si es NULL, se usa el precio_base del producto.
     precio: Decimal | None = Field(default=None, max_digits=10, decimal_places=2)
     # Precio que cobra el proveedor por ESTA variante puntual (lo carga el

@@ -1,18 +1,22 @@
-"""Endpoints SaaS para CU38-CU42."""
+"""Endpoints SaaS para CU01-CU07 actuales."""
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 
 from app.core.deps import SessionDep, require_roles
 from app.modules.identidad.models import RolNombre, Usuario
 from app.modules.saas import service
 from app.modules.saas.models import Plan
 from app.modules.saas.schemas import (
+    CambioPlanIn,
+    CambioPlanOut,
+    CambioPlanPreviewOut,
     EmpresaCreate,
     EmpresaOut,
     EmpresaPage,
     EmpresaUpdate,
+    HistorialCambioPlanOut,
     PlanConsumoOut,
     PlanOut,
     PlanUpdate,
@@ -34,6 +38,19 @@ AdminConsulta = Annotated[
         )
     ),
 ]
+PlanActor = Annotated[
+    Usuario, Depends(require_roles(RolNombre.ADMINISTRADOR))
+]
+
+
+def _empresa_objetivo(actor: Usuario, empresa_id: int | None) -> int:
+    if actor.empresa_id is None:
+        if empresa_id is None:
+            raise HTTPException(422, "Debe indicar la empresa")
+        return empresa_id
+    if empresa_id is not None and empresa_id != actor.empresa_id:
+        raise HTTPException(403, "No puede operar sobre otra empresa")
+    return actor.empresa_id
 
 
 @router.get("/empresas", response_model=EmpresaPage)
@@ -79,8 +96,10 @@ def actualizar_empresa(
 
 @router.get("/planes", response_model=list[PlanOut])
 def listar_planes(
-    session: SessionDep, _: SuperAdmin, solo_activos: bool = False
+    session: SessionDep, actor: PlanActor, solo_activos: bool = False
 ):
+    if actor.empresa_id is not None:
+        solo_activos = True
     return [
         service.to_plan_out(session, plan)
         for plan in service.list_planes(session, solo_activos=solo_activos)
@@ -129,3 +148,51 @@ def mi_plan_y_consumo(session: SessionDep, admin: AdminConsulta):
 
         raise HTTPException(403, "El usuario no está asociado a una empresa")
     return service.get_plan_consumo(session, admin.empresa_id)
+
+
+@router.post(
+    "/suscripciones/validar-cambio", response_model=CambioPlanPreviewOut
+)
+def validar_cambio_plan(
+    data: CambioPlanIn, session: SessionDep, actor: PlanActor
+):
+    empresa_id = _empresa_objetivo(actor, data.empresa_id)
+    return service.preview_cambio_plan(session, empresa_id, data)
+
+
+@router.put("/suscripciones/cambiar-plan", response_model=CambioPlanOut)
+def cambiar_o_renovar_plan(
+    data: CambioPlanIn,
+    session: SessionDep,
+    actor: PlanActor,
+    idempotency_key: Annotated[
+        str,
+        Header(
+            alias="Idempotency-Key",
+            min_length=8,
+            max_length=80,
+            description="Identificador único del intento de cambio o renovación",
+        ),
+    ],
+):
+    empresa_id = _empresa_objetivo(actor, data.empresa_id)
+    return service.cambiar_o_renovar_plan(
+        session,
+        empresa_id,
+        data,
+        actor_id=actor.id,
+        clave_idempotencia=idempotency_key,
+    )
+
+
+@router.get(
+    "/suscripciones/historial", response_model=list[HistorialCambioPlanOut]
+)
+def historial_cambios(
+    session: SessionDep,
+    actor: PlanActor,
+    empresa_id: int | None = Query(default=None),
+):
+    return service.historial_cambios_plan(
+        session, _empresa_objetivo(actor, empresa_id)
+    )

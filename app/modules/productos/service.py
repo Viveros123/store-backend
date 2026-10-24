@@ -95,16 +95,22 @@ def _variante_out(session: Session, v: ProductoVariante, producto: Producto) -> 
 def _validar_refs_producto(
     session: Session,
     *,
+    empresa_id: int,
     categoria_id: int | None,
     coleccion_id: int | None,
     proveedor_id: int | None,
 ) -> None:
-    if categoria_id is not None and session.get(Categoria, categoria_id) is None:
-        raise HTTPException(422, "La categoría no existe")
-    if coleccion_id is not None and session.get(Coleccion, coleccion_id) is None:
-        raise HTTPException(422, "La colección no existe")
-    if proveedor_id is not None and session.get(Proveedor, proveedor_id) is None:
-        raise HTTPException(422, "El proveedor no existe")
+    referencias = (
+        (Categoria, categoria_id, "La categoría no existe"),
+        (Coleccion, coleccion_id, "La colección no existe"),
+        (Proveedor, proveedor_id, "El proveedor no existe"),
+    )
+    for modelo, referencia_id, mensaje in referencias:
+        if referencia_id is None:
+            continue
+        referencia = session.get(modelo, referencia_id)
+        if referencia is None or referencia.empresa_id != empresa_id:
+            raise HTTPException(422, mensaje)
 
 
 # --------------------------------------------------------------------------- #
@@ -113,6 +119,7 @@ def _validar_refs_producto(
 def list_productos(
     session: Session,
     *,
+    empresa_id: int,
     q=None,
     categoria_id=None,
     coleccion_id=None,
@@ -121,7 +128,7 @@ def list_productos(
     page=1,
     size=20,
 ) -> tuple[list[dict], int]:
-    filtros = []
+    filtros = [Producto.empresa_id == empresa_id]
     if q:
         filtros.append(func.lower(Producto.nombre).like(f"%{q.strip().lower()}%"))
     if categoria_id is not None:
@@ -139,15 +146,19 @@ def list_productos(
     return [_producto_out(session, p) for p in items], total
 
 
-def productos_opciones(session: Session) -> list[Producto]:
+def productos_opciones(session: Session, *, empresa_id: int) -> list[Producto]:
     return session.exec(
-        select(Producto).where(Producto.activo == True).order_by(Producto.nombre)  # noqa: E712
+        select(Producto).where(
+            Producto.empresa_id == empresa_id, Producto.activo == True  # noqa: E712
+        ).order_by(Producto.nombre)
     ).all()
 
 
-def get_producto_detalle(session: Session, producto_id: int) -> dict:
+def get_producto_detalle(
+    session: Session, producto_id: int, *, empresa_id: int
+) -> dict:
     p = session.get(Producto, producto_id)
-    if p is None:
+    if p is None or p.empresa_id != empresa_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Producto no encontrado")
     out = _producto_out(session, p)
     variantes = session.exec(
@@ -159,27 +170,29 @@ def get_producto_detalle(session: Session, producto_id: int) -> dict:
     return out
 
 
-def create_producto(session: Session, data) -> dict:
+def create_producto(session: Session, data, *, empresa_id: int) -> dict:
     _validar_refs_producto(
         session,
+        empresa_id=empresa_id,
         categoria_id=data.categoria_id,
         coleccion_id=data.coleccion_id,
         proveedor_id=data.proveedor_id,
     )
-    p = Producto(**data.model_dump())
+    p = Producto(empresa_id=empresa_id, **data.model_dump())
     session.add(p)
     session.commit()
     session.refresh(p)
     return _producto_out(session, p)
 
 
-def update_producto(session: Session, producto_id: int, data) -> dict:
-    p = session.get(Producto, producto_id)
-    if p is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Producto no encontrado")
+def update_producto(
+    session: Session, producto_id: int, data, *, empresa_id: int
+) -> dict:
+    p = _get_producto(session, producto_id, empresa_id=empresa_id)
     cambios = data.model_dump(exclude_unset=True)
     _validar_refs_producto(
         session,
+        empresa_id=empresa_id,
         categoria_id=cambios.get("categoria_id"),
         coleccion_id=cambios.get("coleccion_id"),
         proveedor_id=cambios.get("proveedor_id"),
@@ -202,25 +215,40 @@ def update_producto(session: Session, producto_id: int, data) -> dict:
 # --------------------------------------------------------------------------- #
 #  Variantes
 # --------------------------------------------------------------------------- #
-def _get_producto(session: Session, producto_id: int) -> Producto:
+def _get_producto(
+    session: Session, producto_id: int, *, empresa_id: int
+) -> Producto:
     p = session.get(Producto, producto_id)
-    if p is None:
+    if p is None or p.empresa_id != empresa_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Producto no encontrado")
     return p
 
 
-def _validar_talla_color(session, talla_id, color_id) -> None:
-    if talla_id is not None and session.get(Talla, talla_id) is None:
-        raise HTTPException(422, "La talla no existe")
-    if color_id is not None and session.get(Color, color_id) is None:
-        raise HTTPException(422, "El color no existe")
+def _validar_talla_color(session, talla_id, color_id, empresa_id: int) -> None:
+    referencias = (
+        (Talla, talla_id, "La talla no existe"),
+        (Color, color_id, "El color no existe"),
+    )
+    for modelo, referencia_id, mensaje in referencias:
+        if referencia_id is None:
+            continue
+        referencia = session.get(modelo, referencia_id)
+        if referencia is None or referencia.empresa_id != empresa_id:
+            raise HTTPException(422, mensaje)
 
 
-def add_variante(session: Session, producto_id: int, data) -> dict:
-    p = _get_producto(session, producto_id)
-    _validar_talla_color(session, data.talla_id, data.color_id)
+def add_variante(
+    session: Session, producto_id: int, data, *, empresa_id: int
+) -> dict:
+    p = _get_producto(session, producto_id, empresa_id=empresa_id)
+    _validar_talla_color(session, data.talla_id, data.color_id, empresa_id)
 
-    if session.exec(select(ProductoVariante).where(ProductoVariante.sku == data.sku)).first():
+    if session.exec(
+        select(ProductoVariante).where(
+            ProductoVariante.empresa_id == empresa_id,
+            ProductoVariante.sku == data.sku,
+        )
+    ).first():
         raise HTTPException(409, "Ya existe una variante con ese SKU")
     dup = session.exec(
         select(ProductoVariante).where(
@@ -232,23 +260,32 @@ def add_variante(session: Session, producto_id: int, data) -> dict:
     if dup:
         raise HTTPException(409, "Ya existe una variante con esa talla y color")
 
-    v = ProductoVariante(producto_id=producto_id, **data.model_dump())
+    v = ProductoVariante(
+        empresa_id=empresa_id, producto_id=producto_id, **data.model_dump()
+    )
     session.add(v)
     session.commit()
     session.refresh(v)
     return _variante_out(session, v, p)
 
 
-def update_variante(session: Session, variante_id: int, data) -> dict:
+def update_variante(
+    session: Session, variante_id: int, data, *, empresa_id: int
+) -> dict:
     v = session.get(ProductoVariante, variante_id)
-    if v is None:
+    if v is None or v.empresa_id != empresa_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Variante no encontrada")
     cambios = data.model_dump(exclude_unset=True)
-    _validar_talla_color(session, cambios.get("talla_id"), cambios.get("color_id"))
+    _validar_talla_color(
+        session, cambios.get("talla_id"), cambios.get("color_id"), empresa_id
+    )
 
     if "sku" in cambios and cambios["sku"]:
         otro = session.exec(
-            select(ProductoVariante).where(ProductoVariante.sku == cambios["sku"])
+            select(ProductoVariante).where(
+                ProductoVariante.empresa_id == empresa_id,
+                ProductoVariante.sku == cambios["sku"],
+            )
         ).first()
         if otro and otro.id != variante_id:
             raise HTTPException(409, "Ya existe una variante con ese SKU")
@@ -330,20 +367,18 @@ def _eliminar_variantes_del_producto(session: Session, producto_id: int) -> None
     session.flush()  # idem: que las variantes se borren antes que el producto
 
 
-def delete_variante(session: Session, variante_id: int) -> None:
+def delete_variante(session: Session, variante_id: int, *, empresa_id: int) -> None:
     v = session.get(ProductoVariante, variante_id)
-    if v is None:
+    if v is None or v.empresa_id != empresa_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Variante no encontrada")
     _borrar_inventario_de_variantes(session, [v.id])
     session.delete(v)
     session.commit()
 
 
-def delete_producto(session: Session, producto_id: int) -> None:
+def delete_producto(session: Session, producto_id: int, *, empresa_id: int) -> None:
     """Admin: borra el producto, sus variantes y el stock asociado."""
-    p = session.get(Producto, producto_id)
-    if p is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Producto no encontrado")
+    p = _get_producto(session, producto_id, empresa_id=empresa_id)
     _eliminar_variantes_del_producto(session, producto_id)
     session.delete(p)
     session.commit()
@@ -410,12 +445,19 @@ def create_producto_proveedor(
     session: Session, proveedor_id: int, data
 ) -> dict:
     # El proveedor no elige proveedor_id ni puede activar el producto.
-    if session.get(Categoria, data.categoria_id) is None:
-        raise HTTPException(422, "La categoría no existe")
-    if data.coleccion_id is not None and session.get(Coleccion, data.coleccion_id) is None:
-        raise HTTPException(422, "La colección no existe")
+    proveedor = session.get(Proveedor, proveedor_id)
+    if proveedor is None:
+        raise HTTPException(404, "Proveedor no encontrado")
+    _validar_refs_producto(
+        session,
+        empresa_id=proveedor.empresa_id,
+        categoria_id=data.categoria_id,
+        coleccion_id=data.coleccion_id,
+        proveedor_id=proveedor_id,
+    )
 
     p = Producto(
+        empresa_id=proveedor.empresa_id,
         nombre=data.nombre,
         descripcion=data.descripcion,
         categoria_id=data.categoria_id,
@@ -443,6 +485,7 @@ def update_producto_proveedor(
     cambios.pop("precio_base", None)
     _validar_refs_producto(
         session,
+        empresa_id=p.empresa_id,
         categoria_id=cambios.get("categoria_id"),
         coleccion_id=cambios.get("coleccion_id"),
         proveedor_id=None,
@@ -468,22 +511,26 @@ def _variante_del_proveedor(
 def add_variante_proveedor(
     session: Session, producto_id: int, proveedor_id: int, data
 ) -> dict:
-    _producto_del_proveedor(session, producto_id, proveedor_id)
-    return add_variante(session, producto_id, data)
+    producto = _producto_del_proveedor(session, producto_id, proveedor_id)
+    return add_variante(
+        session, producto_id, data, empresa_id=producto.empresa_id
+    )
 
 
 def update_variante_proveedor(
     session: Session, variante_id: int, proveedor_id: int, data
 ) -> dict:
-    _variante_del_proveedor(session, variante_id, proveedor_id)
-    return update_variante(session, variante_id, data)
+    variante = _variante_del_proveedor(session, variante_id, proveedor_id)
+    return update_variante(
+        session, variante_id, data, empresa_id=variante.empresa_id
+    )
 
 
 def delete_variante_proveedor(
     session: Session, variante_id: int, proveedor_id: int
 ) -> None:
-    _variante_del_proveedor(session, variante_id, proveedor_id)
-    delete_variante(session, variante_id)
+    variante = _variante_del_proveedor(session, variante_id, proveedor_id)
+    delete_variante(session, variante_id, empresa_id=variante.empresa_id)
 
 
 # --------------------------------------------------------------------------- #
@@ -535,9 +582,14 @@ def _catalogo_producto_out(session: Session, p: Producto) -> dict:
     }
 
 
-def _temporadas_vigentes_ids(session: Session) -> list[int]:
+def _temporadas_vigentes_ids(session: Session, empresa_id: int) -> list[int]:
     hoy = date.today()
-    temporadas = session.exec(select(Temporada).where(Temporada.activo == True)).all()  # noqa: E712
+    temporadas = session.exec(
+        select(Temporada).where(
+            Temporada.empresa_id == empresa_id,
+            Temporada.activo == True,  # noqa: E712
+        )
+    ).all()
     return [
         t.id
         for t in temporadas
@@ -582,6 +634,7 @@ def list_catalogo(
     size: int = 20,
 ) -> tuple[list[dict], int]:
     filtros = [
+        Producto.empresa_id == empresa_id,
         Producto.activo == True,  # noqa: E712
         Producto.precio_base.is_not(None),
         Producto.id.in_(_productos_de_empresa_ids(empresa_id)),
@@ -622,12 +675,14 @@ def list_destacados(
     session: Session, *, empresa_id: int, limit: int = 12
 ) -> list[dict]:
     """Vitrina de la portada: productos de temporadas vigentes."""
-    ids_vigentes = _temporadas_vigentes_ids(session)
+    ids_vigentes = _temporadas_vigentes_ids(session, empresa_id)
     if not ids_vigentes:
         return []
     colecciones = session.exec(
         select(Coleccion).where(
-            Coleccion.temporada_id.in_(ids_vigentes), Coleccion.activo == True  # noqa: E712
+            Coleccion.empresa_id == empresa_id,
+            Coleccion.temporada_id.in_(ids_vigentes),
+            Coleccion.activo == True,  # noqa: E712
         )
     ).all()
     col_ids = [c.id for c in colecciones]
@@ -637,6 +692,7 @@ def list_destacados(
         select(Producto)
         .where(
             Producto.activo == True,  # noqa: E712
+            Producto.empresa_id == empresa_id,
             Producto.precio_base.is_not(None),
             Producto.coleccion_id.in_(col_ids),
             Producto.id.in_(_productos_de_empresa_ids(empresa_id)),
@@ -659,7 +715,13 @@ def get_catalogo_detalle(
         )
         .limit(1)
     ).first()
-    if p is None or not p.activo or p.precio_base is None or pertenece is None:
+    if (
+        p is None
+        or p.empresa_id != empresa_id
+        or not p.activo
+        or p.precio_base is None
+        or pertenece is None
+    ):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Producto no encontrado")
 
     out = _catalogo_producto_out(session, p)

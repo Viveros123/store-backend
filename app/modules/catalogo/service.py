@@ -13,9 +13,11 @@ from app.modules.catalogo.models import (
 )
 
 
-def _get_or_404(session: Session, model: type, obj_id: int, nombre: str):
+def _get_or_404(
+    session: Session, model: type, obj_id: int, nombre: str, empresa_id: int
+):
     obj = session.get(model, obj_id)
-    if obj is None:
+    if obj is None or obj.empresa_id != empresa_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"{nombre} no encontrado/a"
         )
@@ -25,8 +27,8 @@ def _get_or_404(session: Session, model: type, obj_id: int, nombre: str):
 # --------------------------------------------------------------------------- #
 #  Categorías
 # --------------------------------------------------------------------------- #
-def list_categorias(session, *, q=None, activo=None, page=1, size=20):
-    filtros = []
+def list_categorias(session, *, empresa_id, q=None, activo=None, page=1, size=20):
+    filtros = [Categoria.empresa_id == empresa_id]
     if q:
         filtros.append(func.lower(Categoria.nombre).like(f"%{q.strip().lower()}%"))
     if activo is not None:
@@ -36,30 +38,38 @@ def list_categorias(session, *, q=None, activo=None, page=1, size=20):
     )
 
 
-def categorias_opciones(session: Session):
+def categorias_opciones(session: Session, *, empresa_id: int):
     return session.exec(
-        select(Categoria).where(Categoria.activo == True).order_by(Categoria.nombre)  # noqa: E712
+        select(Categoria).where(
+            Categoria.empresa_id == empresa_id, Categoria.activo == True  # noqa: E712
+        ).order_by(Categoria.nombre)
     ).all()
 
 
-def create_categoria(session: Session, data) -> Categoria:
+def create_categoria(session: Session, data, *, empresa_id: int) -> Categoria:
     if session.exec(
-        select(Categoria).where(func.lower(Categoria.nombre) == data.nombre.lower())
+        select(Categoria).where(
+            Categoria.empresa_id == empresa_id,
+            func.lower(Categoria.nombre) == data.nombre.lower(),
+        )
     ).first():
         raise HTTPException(409, "Ya existe una categoría con ese nombre")
-    obj = Categoria(**data.model_dump())
+    obj = Categoria(empresa_id=empresa_id, **data.model_dump())
     session.add(obj)
     session.commit()
     session.refresh(obj)
     return obj
 
 
-def update_categoria(session: Session, cat_id: int, data) -> Categoria:
-    obj = _get_or_404(session, Categoria, cat_id, "Categoría")
+def update_categoria(
+    session: Session, cat_id: int, data, *, empresa_id: int
+) -> Categoria:
+    obj = _get_or_404(session, Categoria, cat_id, "Categoría", empresa_id)
     cambios = data.model_dump(exclude_unset=True)
     if "nombre" in cambios and cambios["nombre"]:
         otro = session.exec(
             select(Categoria).where(
+                Categoria.empresa_id == empresa_id,
                 func.lower(Categoria.nombre) == cambios["nombre"].lower()
             )
         ).first()
@@ -76,8 +86,10 @@ def update_categoria(session: Session, cat_id: int, data) -> Categoria:
 # --------------------------------------------------------------------------- #
 #  Tallas
 # --------------------------------------------------------------------------- #
-def list_tallas(session, *, q=None, tipo=None, activo=None, page=1, size=20):
-    filtros = []
+def list_tallas(
+    session, *, empresa_id, q=None, tipo=None, activo=None, page=1, size=20
+):
+    filtros = [Talla.empresa_id == empresa_id]
     if q:
         filtros.append(func.lower(Talla.valor).like(f"%{q.strip().lower()}%"))
     if tipo:
@@ -89,31 +101,43 @@ def list_tallas(session, *, q=None, tipo=None, activo=None, page=1, size=20):
     )
 
 
-def tallas_opciones(session: Session):
+def tallas_opciones(session: Session, *, empresa_id: int):
     return session.exec(
-        select(Talla).where(Talla.activo == True).order_by(Talla.tipo, Talla.valor)  # noqa: E712
+        select(Talla).where(
+            Talla.empresa_id == empresa_id, Talla.activo == True  # noqa: E712
+        ).order_by(Talla.tipo, Talla.valor)
     ).all()
 
 
-def create_talla(session: Session, data) -> Talla:
+def create_talla(session: Session, data, *, empresa_id: int) -> Talla:
     if session.exec(
-        select(Talla).where(Talla.valor == data.valor, Talla.tipo == data.tipo)
+        select(Talla).where(
+            Talla.empresa_id == empresa_id,
+            Talla.valor == data.valor,
+            Talla.tipo == data.tipo,
+        )
     ).first():
         raise HTTPException(409, "Esa talla ya existe para ese tipo")
-    obj = Talla(**data.model_dump())
+    obj = Talla(empresa_id=empresa_id, **data.model_dump())
     session.add(obj)
     session.commit()
     session.refresh(obj)
     return obj
 
 
-def update_talla(session: Session, talla_id: int, data) -> Talla:
-    obj = _get_or_404(session, Talla, talla_id, "Talla")
+def update_talla(
+    session: Session, talla_id: int, data, *, empresa_id: int
+) -> Talla:
+    obj = _get_or_404(session, Talla, talla_id, "Talla", empresa_id)
     cambios = data.model_dump(exclude_unset=True)
     nuevo_valor = cambios.get("valor", obj.valor)
     nuevo_tipo = cambios.get("tipo", obj.tipo)
     otro = session.exec(
-        select(Talla).where(Talla.valor == nuevo_valor, Talla.tipo == nuevo_tipo)
+        select(Talla).where(
+            Talla.empresa_id == empresa_id,
+            Talla.valor == nuevo_valor,
+            Talla.tipo == nuevo_tipo,
+        )
     ).first()
     if otro and otro.id != talla_id:
         raise HTTPException(409, "Esa talla ya existe para ese tipo")
@@ -128,8 +152,8 @@ def update_talla(session: Session, talla_id: int, data) -> Talla:
 # --------------------------------------------------------------------------- #
 #  Colores
 # --------------------------------------------------------------------------- #
-def list_colores(session, *, q=None, activo=None, page=1, size=20):
-    filtros = []
+def list_colores(session, *, empresa_id, q=None, activo=None, page=1, size=20):
+    filtros = [Color.empresa_id == empresa_id]
     if q:
         filtros.append(func.lower(Color.nombre).like(f"%{q.strip().lower()}%"))
     if activo is not None:
@@ -139,30 +163,40 @@ def list_colores(session, *, q=None, activo=None, page=1, size=20):
     )
 
 
-def colores_opciones(session: Session):
+def colores_opciones(session: Session, *, empresa_id: int):
     return session.exec(
-        select(Color).where(Color.activo == True).order_by(Color.nombre)  # noqa: E712
+        select(Color).where(
+            Color.empresa_id == empresa_id, Color.activo == True  # noqa: E712
+        ).order_by(Color.nombre)
     ).all()
 
 
-def create_color(session: Session, data) -> Color:
+def create_color(session: Session, data, *, empresa_id: int) -> Color:
     if session.exec(
-        select(Color).where(func.lower(Color.nombre) == data.nombre.lower())
+        select(Color).where(
+            Color.empresa_id == empresa_id,
+            func.lower(Color.nombre) == data.nombre.lower(),
+        )
     ).first():
         raise HTTPException(409, "Ya existe un color con ese nombre")
-    obj = Color(**data.model_dump())
+    obj = Color(empresa_id=empresa_id, **data.model_dump())
     session.add(obj)
     session.commit()
     session.refresh(obj)
     return obj
 
 
-def update_color(session: Session, color_id: int, data) -> Color:
-    obj = _get_or_404(session, Color, color_id, "Color")
+def update_color(
+    session: Session, color_id: int, data, *, empresa_id: int
+) -> Color:
+    obj = _get_or_404(session, Color, color_id, "Color", empresa_id)
     cambios = data.model_dump(exclude_unset=True)
     if "nombre" in cambios and cambios["nombre"]:
         otro = session.exec(
-            select(Color).where(func.lower(Color.nombre) == cambios["nombre"].lower())
+            select(Color).where(
+                Color.empresa_id == empresa_id,
+                func.lower(Color.nombre) == cambios["nombre"].lower(),
+            )
         ).first()
         if otro and otro.id != color_id:
             raise HTTPException(409, "Ya existe un color con ese nombre")
@@ -177,8 +211,8 @@ def update_color(session: Session, color_id: int, data) -> Color:
 # --------------------------------------------------------------------------- #
 #  Temporadas (CU6)
 # --------------------------------------------------------------------------- #
-def list_temporadas(session, *, q=None, activo=None, page=1, size=20):
-    filtros = []
+def list_temporadas(session, *, empresa_id, q=None, activo=None, page=1, size=20):
+    filtros = [Temporada.empresa_id == empresa_id]
     if q:
         filtros.append(func.lower(Temporada.nombre).like(f"%{q.strip().lower()}%"))
     if activo is not None:
@@ -193,30 +227,38 @@ def list_temporadas(session, *, q=None, activo=None, page=1, size=20):
     )
 
 
-def temporadas_opciones(session: Session):
+def temporadas_opciones(session: Session, *, empresa_id: int):
     return session.exec(
-        select(Temporada).where(Temporada.activo == True).order_by(Temporada.nombre)  # noqa: E712
+        select(Temporada).where(
+            Temporada.empresa_id == empresa_id, Temporada.activo == True  # noqa: E712
+        ).order_by(Temporada.nombre)
     ).all()
 
 
-def create_temporada(session: Session, data) -> Temporada:
+def create_temporada(session: Session, data, *, empresa_id: int) -> Temporada:
     if session.exec(
-        select(Temporada).where(func.lower(Temporada.nombre) == data.nombre.lower())
+        select(Temporada).where(
+            Temporada.empresa_id == empresa_id,
+            func.lower(Temporada.nombre) == data.nombre.lower(),
+        )
     ).first():
         raise HTTPException(409, "Ya existe una temporada con ese nombre")
-    obj = Temporada(**data.model_dump())
+    obj = Temporada(empresa_id=empresa_id, **data.model_dump())
     session.add(obj)
     session.commit()
     session.refresh(obj)
     return obj
 
 
-def update_temporada(session: Session, temp_id: int, data) -> Temporada:
-    obj = _get_or_404(session, Temporada, temp_id, "Temporada")
+def update_temporada(
+    session: Session, temp_id: int, data, *, empresa_id: int
+) -> Temporada:
+    obj = _get_or_404(session, Temporada, temp_id, "Temporada", empresa_id)
     cambios = data.model_dump(exclude_unset=True)
     if "nombre" in cambios and cambios["nombre"]:
         otro = session.exec(
             select(Temporada).where(
+                Temporada.empresa_id == empresa_id,
                 func.lower(Temporada.nombre) == cambios["nombre"].lower()
             )
         ).first()
@@ -251,8 +293,10 @@ def _coleccion_out(session: Session, obj: Coleccion) -> dict:
     }
 
 
-def list_colecciones(session, *, q=None, temporada_id=None, activo=None, page=1, size=20):
-    filtros = []
+def list_colecciones(
+    session, *, empresa_id, q=None, temporada_id=None, activo=None, page=1, size=20
+):
+    filtros = [Coleccion.empresa_id == empresa_id]
     if q:
         filtros.append(func.lower(Coleccion.nombre).like(f"%{q.strip().lower()}%"))
     if temporada_id is not None:
@@ -265,33 +309,42 @@ def list_colecciones(session, *, q=None, temporada_id=None, activo=None, page=1,
     return [_coleccion_out(session, x) for x in items], total
 
 
-def colecciones_opciones(session: Session, temporada_id: int | None = None):
-    base = select(Coleccion).where(Coleccion.activo == True)  # noqa: E712
+def colecciones_opciones(
+    session: Session, temporada_id: int | None = None, *, empresa_id: int
+):
+    base = select(Coleccion).where(
+        Coleccion.empresa_id == empresa_id, Coleccion.activo == True  # noqa: E712
+    )
     if temporada_id is not None:
         base = base.where(Coleccion.temporada_id == temporada_id)
     items = session.exec(base.order_by(Coleccion.nombre)).all()
     return [_coleccion_out(session, x) for x in items]
 
 
-def _validar_temporada(session: Session, temporada_id: int) -> None:
-    if session.get(Temporada, temporada_id) is None:
+def _validar_temporada(
+    session: Session, temporada_id: int, empresa_id: int
+) -> None:
+    temporada = session.get(Temporada, temporada_id)
+    if temporada is None or temporada.empresa_id != empresa_id:
         raise HTTPException(422, f"La temporada {temporada_id} no existe")
 
 
-def create_coleccion(session: Session, data) -> dict:
-    _validar_temporada(session, data.temporada_id)
-    obj = Coleccion(**data.model_dump())
+def create_coleccion(session: Session, data, *, empresa_id: int) -> dict:
+    _validar_temporada(session, data.temporada_id, empresa_id)
+    obj = Coleccion(empresa_id=empresa_id, **data.model_dump())
     session.add(obj)
     session.commit()
     session.refresh(obj)
     return _coleccion_out(session, obj)
 
 
-def update_coleccion(session: Session, col_id: int, data) -> dict:
-    obj = _get_or_404(session, Coleccion, col_id, "Colección")
+def update_coleccion(
+    session: Session, col_id: int, data, *, empresa_id: int
+) -> dict:
+    obj = _get_or_404(session, Coleccion, col_id, "Colección", empresa_id)
     cambios = data.model_dump(exclude_unset=True)
     if "temporada_id" in cambios and cambios["temporada_id"] is not None:
-        _validar_temporada(session, cambios["temporada_id"])
+        _validar_temporada(session, cambios["temporada_id"], empresa_id)
     for k, v in cambios.items():
         setattr(obj, k, v)
     session.add(obj)

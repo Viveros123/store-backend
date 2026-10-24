@@ -159,22 +159,31 @@ def _validar(tipo: str, valor: Decimal, fecha_inicio: date, fecha_fin: date) -> 
         raise HTTPException(422, "El descuento porcentual no puede superar el 90%")
 
 
-def _productos_existentes(session: Session, producto_ids: list[int]) -> list[Producto]:
+def _productos_existentes(
+    session: Session, producto_ids: list[int], empresa_id: int
+) -> list[Producto]:
     ids = list(dict.fromkeys(producto_ids))
-    productos = session.exec(select(Producto).where(Producto.id.in_(ids))).all()
+    productos = session.exec(
+        select(Producto).where(
+            Producto.id.in_(ids), Producto.empresa_id == empresa_id
+        )
+    ).all()
     if len(productos) != len(ids):
         raise HTTPException(422, "Alguno de los productos elegidos no existe")
     return productos
 
 
 def _variantes_existentes(
-    session: Session, variante_ids: list[int]
+    session: Session, variante_ids: list[int], empresa_id: int
 ) -> list[ProductoVariante]:
     ids = list(dict.fromkeys(variante_ids))
     if not ids:
         return []
     variantes = session.exec(
-        select(ProductoVariante).where(ProductoVariante.id.in_(ids))
+        select(ProductoVariante).where(
+            ProductoVariante.id.in_(ids),
+            ProductoVariante.empresa_id == empresa_id,
+        )
     ).all()
     if len(variantes) != len(ids):
         raise HTTPException(422, "Alguna de las variantes elegidas no existe")
@@ -216,34 +225,36 @@ def _promocion_out(session: Session, promo: Promocion) -> dict:
     }
 
 
-def _get_promocion(session: Session, promocion_id: int) -> Promocion:
+def _get_promocion(
+    session: Session, promocion_id: int, empresa_id: int
+) -> Promocion:
     promo = session.get(Promocion, promocion_id)
-    if promo is None:
+    if promo is None or promo.empresa_id != empresa_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Promoción no encontrada")
     return promo
 
 
 def _reemplazar_productos(
-    session: Session, promocion_id: int, producto_ids: list[int]
+    session: Session, promocion_id: int, producto_ids: list[int], empresa_id: int
 ) -> None:
     for fila in session.exec(
         select(PromocionProducto).where(PromocionProducto.promocion_id == promocion_id)
     ).all():
         session.delete(fila)
     session.flush()
-    for producto in _productos_existentes(session, producto_ids):
+    for producto in _productos_existentes(session, producto_ids, empresa_id):
         session.add(PromocionProducto(promocion_id=promocion_id, producto_id=producto.id))
 
 
 def _reemplazar_variantes(
-    session: Session, promocion_id: int, variante_ids: list[int]
+    session: Session, promocion_id: int, variante_ids: list[int], empresa_id: int
 ) -> None:
     for fila in session.exec(
         select(PromocionVariante).where(PromocionVariante.promocion_id == promocion_id)
     ).all():
         session.delete(fila)
     session.flush()
-    for variante in _variantes_existentes(session, variante_ids):
+    for variante in _variantes_existentes(session, variante_ids, empresa_id):
         session.add(PromocionVariante(promocion_id=promocion_id, variante_id=variante.id))
 
 
@@ -262,7 +273,7 @@ def _exigir_algun_objetivo(session: Session, promocion_id: int) -> None:
         raise HTTPException(422, "Elegí al menos un producto o una variante")
 
 
-def variantes_opciones(session: Session) -> list[dict]:
+def variantes_opciones(session: Session, *, empresa_id: int) -> list[dict]:
     """Variantes de productos activos, para elegirlas en el formulario."""
     filas = session.exec(
         select(
@@ -275,7 +286,11 @@ def variantes_opciones(session: Session) -> list[dict]:
         .join(Producto, Producto.id == ProductoVariante.producto_id)
         .join(Talla, Talla.id == ProductoVariante.talla_id)
         .join(Color, Color.id == ProductoVariante.color_id)
-        .where(Producto.activo == True)  # noqa: E712
+        .where(
+            Producto.empresa_id == empresa_id,
+            ProductoVariante.empresa_id == empresa_id,
+            Producto.activo == True,  # noqa: E712
+        )
         .order_by(Producto.nombre, Talla.valor, Color.nombre)
     ).all()
     return [
@@ -284,35 +299,52 @@ def variantes_opciones(session: Session) -> list[dict]:
     ]
 
 
-def listar_promociones(session: Session) -> list[dict]:
-    promos = session.exec(select(Promocion).order_by(Promocion.id.desc())).all()
+def listar_promociones(session: Session, *, empresa_id: int) -> list[dict]:
+    promos = session.exec(
+        select(Promocion)
+        .where(Promocion.empresa_id == empresa_id)
+        .order_by(Promocion.id.desc())
+    ).all()
     return [_promocion_out(session, p) for p in promos]
 
 
-def obtener_promocion(session: Session, promocion_id: int) -> dict:
-    return _promocion_out(session, _get_promocion(session, promocion_id))
+def obtener_promocion(
+    session: Session, promocion_id: int, *, empresa_id: int
+) -> dict:
+    return _promocion_out(
+        session, _get_promocion(session, promocion_id, empresa_id)
+    )
 
 
-def crear_promocion(session: Session, data: PromocionCreate) -> dict:
+def crear_promocion(
+    session: Session, data: PromocionCreate, *, empresa_id: int
+) -> dict:
     _validar(data.tipo_descuento, data.valor, data.fecha_inicio, data.fecha_fin)
     if not data.producto_ids and not data.variante_ids:
         raise HTTPException(422, "Elegí al menos un producto o una variante")
-    _productos_existentes(session, data.producto_ids)
-    _variantes_existentes(session, data.variante_ids)
-    promo = Promocion(**data.model_dump(exclude={"producto_ids", "variante_ids"}))
+    _productos_existentes(session, data.producto_ids, empresa_id)
+    _variantes_existentes(session, data.variante_ids, empresa_id)
+    promo = Promocion(
+        empresa_id=empresa_id,
+        **data.model_dump(exclude={"producto_ids", "variante_ids"}),
+    )
     session.add(promo)
     session.flush()
-    _reemplazar_productos(session, promo.id, data.producto_ids)
-    _reemplazar_variantes(session, promo.id, data.variante_ids)
+    _reemplazar_productos(session, promo.id, data.producto_ids, empresa_id)
+    _reemplazar_variantes(session, promo.id, data.variante_ids, empresa_id)
     session.commit()
     session.refresh(promo)
     return _promocion_out(session, promo)
 
 
 def actualizar_promocion(
-    session: Session, promocion_id: int, data: PromocionUpdate
+    session: Session,
+    promocion_id: int,
+    data: PromocionUpdate,
+    *,
+    empresa_id: int,
 ) -> dict:
-    promo = _get_promocion(session, promocion_id)
+    promo = _get_promocion(session, promocion_id, empresa_id)
     cambios = data.model_dump(exclude_unset=True)
     producto_ids = cambios.pop("producto_ids", None)
     variante_ids = cambios.pop("variante_ids", None)
@@ -321,9 +353,9 @@ def actualizar_promocion(
     _validar(promo.tipo_descuento, promo.valor, promo.fecha_inicio, promo.fecha_fin)
     session.add(promo)
     if producto_ids is not None:
-        _reemplazar_productos(session, promo.id, producto_ids)
+        _reemplazar_productos(session, promo.id, producto_ids, empresa_id)
     if variante_ids is not None:
-        _reemplazar_variantes(session, promo.id, variante_ids)
+        _reemplazar_variantes(session, promo.id, variante_ids, empresa_id)
     session.flush()
     _exigir_algun_objetivo(session, promo.id)
     session.commit()

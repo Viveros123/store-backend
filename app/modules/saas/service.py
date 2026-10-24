@@ -1,4 +1,4 @@
-"""Reglas de negocio SaaS y coordinación transaccional de CU38-CU42."""
+"""Reglas de negocio SaaS y coordinación transaccional de CU01-CU07."""
 
 import calendar
 from datetime import date, datetime, timezone
@@ -20,11 +20,16 @@ from app.modules.saas.models import (
     Suscripcion,
 )
 from app.modules.saas.schemas import (
+    CambioPlanIn,
+    CambioPlanOut,
+    CambioPlanPreviewOut,
     ConsumoOut,
     EmpresaCreate,
     EmpresaOut,
     EmpresaUpdate,
     FuncionalidadPlanOut,
+    HistorialCambioPlanOut,
+    IncompatibilidadPlanOut,
     LimitePlanOut,
     PlanConsumoOut,
     PlanOut,
@@ -63,6 +68,18 @@ def _suscripcion_actual(session: Session, empresa_id: int) -> Suscripcion | None
         select(Suscripcion)
         .where(Suscripcion.empresa_id == empresa_id)
         .order_by(Suscripcion.id.desc())
+    ).first()
+
+
+def _suscripcion_actual_bloqueada(
+    session: Session, empresa_id: int
+) -> Suscripcion | None:
+    """Bloquea la fila durante cambios críticos; SQLite ignora FOR UPDATE."""
+    return session.exec(
+        select(Suscripcion)
+        .where(Suscripcion.empresa_id == empresa_id)
+        .order_by(Suscripcion.id.desc())
+        .with_for_update()
     ).first()
 
 
@@ -430,33 +447,267 @@ _ETIQUETAS = {
 }
 
 
-def validar_limite_disponible(
-    session: Session, empresa_id: int, codigo: str
-) -> None:
-    """Dependencia mínima de CU44 para hacer efectivos los límites de CU40."""
+def validar_acceso_plan(
+    session: Session,
+    empresa_id: int,
+    *,
+    funcionalidad: str | None = None,
+    limite_codigo: str | None = None,
+    incremento: int = 0,
+) -> Suscripcion:
+    """CU07: valida suscripción, funcionalidad y consumo de forma reutilizable."""
+    empresa = empresa_or_404(session, empresa_id)
+    if not empresa.activa:
+        raise HTTPException(403, "La empresa está suspendida")
     suscripcion = _suscripcion_actual(session, empresa_id)
     if suscripcion is None:
         raise HTTPException(403, "La empresa no tiene una suscripción")
-    if (
-        suscripcion.estado != EstadoSuscripcion.ACTIVA
-        or suscripcion.fecha_vencimiento < date.today()
-    ):
-        raise HTTPException(403, "La suscripción no está activa o vigente")
-    limite = session.exec(
-        select(LimitePlan).where(
-            LimitePlan.plan_id == suscripcion.plan_id,
-            LimitePlan.codigo == codigo,
+    if suscripcion.estado != EstadoSuscripcion.ACTIVA:
+        raise HTTPException(403, f"La suscripción está {suscripcion.estado.lower()}")
+    if suscripcion.fecha_vencimiento < date.today():
+        raise HTTPException(403, "La suscripción está vencida")
+
+    if funcionalidad is not None:
+        configuracion = session.exec(
+            select(FuncionalidadPlan).where(
+                FuncionalidadPlan.plan_id == suscripcion.plan_id,
+                FuncionalidadPlan.codigo == funcionalidad,
+            )
+        ).first()
+        if configuracion is None or not configuracion.habilitada:
+            raise HTTPException(
+                403, f"La funcionalidad {funcionalidad} no está incluida en el plan"
+            )
+
+    if limite_codigo is not None:
+        limite = session.exec(
+            select(LimitePlan).where(
+                LimitePlan.plan_id == suscripcion.plan_id,
+                LimitePlan.codigo == limite_codigo,
+            )
+        ).first()
+        if limite is not None:
+            try:
+                usado = _consumo_recurso(session, empresa_id, limite_codigo)
+            except Exception as exc:
+                raise HTTPException(
+                    503,
+                    "No se pudo medir el consumo del plan; inténtelo nuevamente",
+                ) from exc
+            if usado + incremento > limite.valor_maximo:
+                etiqueta = _ETIQUETAS.get(limite_codigo, limite_codigo)
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    f"Límite alcanzado para {etiqueta}: uso actual {usado}, "
+                    f"máximo {limite.valor_maximo}",
+                )
+    return suscripcion
+
+
+def validar_limite_disponible(
+    session: Session, empresa_id: int, codigo: str
+) -> None:
+    validar_acceso_plan(
+        session, empresa_id, limite_codigo=codigo, incremento=1
+    )
+
+
+def _incompatibilidades_plan(
+    session: Session, empresa_id: int, plan: Plan
+) -> list[IncompatibilidadPlanOut]:
+    incompatibilidades: list[IncompatibilidadPlanOut] = []
+    limites = session.exec(
+        select(LimitePlan).where(LimitePlan.plan_id == plan.id)
+    ).all()
+    for limite in limites:
+        etiqueta = _ETIQUETAS.get(limite.codigo, limite.codigo)
+        try:
+            utilizado = _consumo_recurso(session, empresa_id, limite.codigo)
+        except Exception:
+            incompatibilidades.append(
+                IncompatibilidadPlanOut(
+                    codigo=limite.codigo,
+                    etiqueta=etiqueta,
+                    utilizado=None,
+                    limite=limite.valor_maximo,
+                    mensaje=f"No se pudo medir {etiqueta}",
+                )
+            )
+            continue
+        if utilizado > limite.valor_maximo:
+            incompatibilidades.append(
+                IncompatibilidadPlanOut(
+                    codigo=limite.codigo,
+                    etiqueta=etiqueta,
+                    utilizado=utilizado,
+                    limite=limite.valor_maximo,
+                    mensaje=(
+                        f"{etiqueta}: se utilizan {utilizado} y el plan permite "
+                        f"{limite.valor_maximo}"
+                    ),
+                )
+            )
+    return incompatibilidades
+
+
+def preview_cambio_plan(
+    session: Session, empresa_id: int, data: CambioPlanIn
+) -> CambioPlanPreviewOut:
+    actual = validar_acceso_plan(session, empresa_id)
+    plan_actual = _plan_or_404(session, actual.plan_id)
+    plan_nuevo = _plan_or_404(session, data.plan_id, activo=True)
+    tipo = "RENOVACION" if actual.plan_id == plan_nuevo.id else "CAMBIO"
+    hoy = date.today()
+    if tipo == "RENOVACION":
+        fecha_inicio = actual.fecha_inicio
+        fecha_vencimiento = _sumar_meses(
+            max(actual.fecha_vencimiento, hoy), data.vigencia_meses
+        )
+    else:
+        fecha_inicio = hoy
+        fecha_vencimiento = _sumar_meses(hoy, data.vigencia_meses)
+    incompatibilidades = _incompatibilidades_plan(session, empresa_id, plan_nuevo)
+    return CambioPlanPreviewOut(
+        empresa_id=empresa_id,
+        suscripcion_id=actual.id,
+        plan_actual=to_plan_out(session, plan_actual),
+        plan_nuevo=to_plan_out(session, plan_nuevo),
+        tipo_cambio=tipo,
+        fecha_inicio_nueva=fecha_inicio,
+        fecha_vencimiento_nueva=fecha_vencimiento,
+        compatible=not incompatibilidades,
+        incompatibilidades=incompatibilidades,
+    )
+
+
+def _cambio_out(
+    session: Session,
+    historial: HistorialCambioPlan,
+    suscripcion: Suscripcion,
+    *,
+    idempotente: bool,
+) -> CambioPlanOut:
+    anterior = _plan_or_404(session, historial.plan_anterior_id)
+    nuevo = _plan_or_404(session, historial.plan_nuevo_id)
+    return CambioPlanOut(
+        suscripcion=to_suscripcion_out(session, suscripcion),
+        tipo_cambio=historial.tipo_cambio,
+        plan_anterior_id=anterior.id,
+        plan_anterior_nombre=anterior.nombre,
+        plan_nuevo_id=nuevo.id,
+        plan_nuevo_nombre=nuevo.nombre,
+        fecha_inicio_nueva=historial.fecha_inicio_nueva or suscripcion.fecha_inicio,
+        fecha_vencimiento_nueva=(
+            historial.fecha_vencimiento_nueva or suscripcion.fecha_vencimiento
+        ),
+        idempotente=idempotente,
+    )
+
+
+def cambiar_o_renovar_plan(
+    session: Session,
+    empresa_id: int,
+    data: CambioPlanIn,
+    *,
+    actor_id: int,
+    clave_idempotencia: str,
+) -> CambioPlanOut:
+    repetido = session.exec(
+        select(HistorialCambioPlan).where(
+            HistorialCambioPlan.clave_idempotencia == clave_idempotencia
         )
     ).first()
-    if limite is None:
-        return
-    usado = _consumo_recurso(session, empresa_id, codigo)
-    if usado >= limite.valor_maximo:
-        etiqueta = _ETIQUETAS.get(codigo, codigo)
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            f"Se alcanzó el límite del plan para {etiqueta}",
+    if repetido is not None:
+        suscripcion = session.get(Suscripcion, repetido.suscripcion_id)
+        if suscripcion is None:
+            raise HTTPException(409, "La operación previa no puede recuperarse")
+        return _cambio_out(session, repetido, suscripcion, idempotente=True)
+
+    actual = _suscripcion_actual_bloqueada(session, empresa_id)
+    if actual is None:
+        raise HTTPException(404, "La empresa no tiene una suscripción registrada")
+    vista = preview_cambio_plan(session, empresa_id, data)
+    if not vista.compatible:
+        mensajes = "; ".join(x.mensaje for x in vista.incompatibilidades)
+        raise HTTPException(409, f"El plan no es compatible: {mensajes}")
+    ahora = datetime.now(timezone.utc)
+    historial = HistorialCambioPlan(
+        suscripcion_id=actual.id,
+        plan_anterior_id=actual.plan_id,
+        plan_nuevo_id=data.plan_id,
+        usuario_id=actor_id,
+        tipo_cambio=vista.tipo_cambio,
+        observacion=data.observacion,
+        clave_idempotencia=clave_idempotencia,
+        fecha_inicio_nueva=vista.fecha_inicio_nueva,
+        fecha_vencimiento_nueva=vista.fecha_vencimiento_nueva,
+        fecha_cambio=ahora,
+    )
+    try:
+        actual.plan_id = data.plan_id
+        actual.fecha_inicio = vista.fecha_inicio_nueva
+        actual.fecha_vencimiento = vista.fecha_vencimiento_nueva
+        actual.estado = EstadoSuscripcion.ACTIVA
+        actual.fecha_actualizacion = ahora
+        session.add(actual)
+        session.add(historial)
+        session.commit()
+        session.refresh(actual)
+        session.refresh(historial)
+        return _cambio_out(session, historial, actual, idempotente=False)
+    except IntegrityError as exc:
+        session.rollback()
+        repetido = session.exec(
+            select(HistorialCambioPlan).where(
+                HistorialCambioPlan.clave_idempotencia == clave_idempotencia
+            )
+        ).first()
+        if repetido is not None:
+            suscripcion = session.get(Suscripcion, repetido.suscripcion_id)
+            if suscripcion is not None:
+                return _cambio_out(session, repetido, suscripcion, idempotente=True)
+        raise HTTPException(409, "La solicitud ya fue procesada") from exc
+    except Exception:
+        session.rollback()
+        raise
+
+
+def historial_cambios_plan(
+    session: Session, empresa_id: int
+) -> list[HistorialCambioPlanOut]:
+    suscripcion = _suscripcion_actual(session, empresa_id)
+    if suscripcion is None:
+        return []
+    items = session.exec(
+        select(HistorialCambioPlan)
+        .where(HistorialCambioPlan.suscripcion_id == suscripcion.id)
+        .order_by(HistorialCambioPlan.fecha_cambio.desc())
+    ).all()
+    salida: list[HistorialCambioPlanOut] = []
+    for item in items:
+        anterior = (
+            session.get(Plan, item.plan_anterior_id)
+            if item.plan_anterior_id is not None
+            else None
         )
+        nuevo = _plan_or_404(session, item.plan_nuevo_id)
+        salida.append(
+            HistorialCambioPlanOut(
+                id=item.id,
+                suscripcion_id=item.suscripcion_id,
+                plan_anterior_id=item.plan_anterior_id,
+                plan_anterior_nombre=anterior.nombre if anterior else None,
+                plan_nuevo_id=nuevo.id,
+                plan_nuevo_nombre=nuevo.nombre,
+                usuario_id=item.usuario_id,
+                tipo_cambio=item.tipo_cambio,
+                observacion=item.observacion,
+                fecha_inicio_nueva=item.fecha_inicio_nueva,
+                fecha_vencimiento_nueva=item.fecha_vencimiento_nueva,
+                fecha_cambio=item.fecha_cambio,
+            )
+        )
+    return salida
 
 
 def get_plan_consumo(session: Session, empresa_id: int) -> PlanConsumoOut:

@@ -15,6 +15,8 @@ from app.modules.ia.schemas import (
     ReporteVozOut,
 )
 from app.modules.identidad.models import RolNombre, Usuario
+from app.modules.saas.models import CodigoFuncionalidad, CodigoLimite
+from app.modules.saas.service import validar_acceso_plan
 
 router = APIRouter(prefix="/ia", tags=["ia"])
 
@@ -44,5 +46,16 @@ def chat(data: ChatIn, session: SessionDep, user: ClienteUser):  # CU30
 
 @router.post("/reportes/voz", response_model=ReporteVozOut)
 def reporte_por_voz(data: ReporteVozIn, session: SessionDep, user: AdminUser):  # CU32
+    if user.empresa_id is None:
+        from fastapi import HTTPException
+
+        raise HTTPException(403, "El usuario no está asociado a una empresa")
+    validar_acceso_plan(
+        session,
+        user.empresa_id,
+        funcionalidad=CodigoFuncionalidad.REPORTES_IA,
+        limite_codigo=CodigoLimite.MAX_REPORTES_IA_MES,
+        incremento=1,
+    )
     reporte = service.generar_reporte_voz(session, user.id, data.texto)
     return ReporteVozOut(consulta=data.texto, reporte=reporte)

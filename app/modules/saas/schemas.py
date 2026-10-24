@@ -156,3 +156,57 @@ class PlanConsumoOut(BaseModel):
     dias_restantes: int
     funcionalidades: list[FuncionalidadPlanOut]
     consumos: list[ConsumoOut]
+
+
+class CambioPlanIn(BaseModel):
+    empresa_id: int | None = None
+    plan_id: int
+    vigencia_meses: int = Field(default=1, ge=1, le=120)
+    observacion: str | None = Field(default=None, max_length=255)
+
+
+class IncompatibilidadPlanOut(BaseModel):
+    codigo: str
+    etiqueta: str
+    utilizado: int | None
+    limite: int
+    mensaje: str
+
+
+class CambioPlanPreviewOut(BaseModel):
+    empresa_id: int
+    suscripcion_id: int
+    plan_actual: PlanOut
+    plan_nuevo: PlanOut
+    tipo_cambio: str
+    fecha_inicio_nueva: date
+    fecha_vencimiento_nueva: date
+    compatible: bool
+    incompatibilidades: list[IncompatibilidadPlanOut]
+
+
+class CambioPlanOut(BaseModel):
+    suscripcion: SuscripcionOut
+    tipo_cambio: str
+    plan_anterior_id: int
+    plan_anterior_nombre: str
+    plan_nuevo_id: int
+    plan_nuevo_nombre: str
+    fecha_inicio_nueva: date
+    fecha_vencimiento_nueva: date
+    idempotente: bool = False
+
+
+class HistorialCambioPlanOut(BaseModel):
+    id: int
+    suscripcion_id: int
+    plan_anterior_id: int | None
+    plan_anterior_nombre: str | None
+    plan_nuevo_id: int
+    plan_nuevo_nombre: str
+    usuario_id: int
+    tipo_cambio: str
+    observacion: str | None
+    fecha_inicio_nueva: date | None
+    fecha_vencimiento_nueva: date | None
+    fecha_cambio: datetime

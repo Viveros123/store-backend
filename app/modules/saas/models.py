@@ -1,4 +1,4 @@
-"""Modelos persistentes del módulo SaaS (CU38-CU42)."""
+"""Modelos persistentes del módulo SaaS (CU01-CU07 actuales)."""
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -117,6 +117,13 @@ class HistorialCambioPlan(SQLModel, table=True):
     usuario_id: int = Field(foreign_key="usuario.id")
     tipo_cambio: str = Field(max_length=20)
     observacion: str | None = Field(default=None, max_length=255)
+    # CU06: la clave evita repetir el cambio si el cliente reenvía la misma
+    # solicitud. Es opcional para conservar el historial del primer parcial.
+    clave_idempotencia: str | None = Field(
+        default=None, max_length=80, unique=True, index=True
+    )
+    fecha_inicio_nueva: date | None = None
+    fecha_vencimiento_nueva: date | None = None
     fecha_cambio: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
         sa_column=Column(DateTime(timezone=True), nullable=False),

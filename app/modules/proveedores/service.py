@@ -10,12 +10,13 @@ from app.modules.proveedores.schemas import ProveedorCreate, ProveedorUpdate
 def list_proveedores(
     session: Session,
     *,
+    empresa_id: int,
     q: str | None = None,
     activo: bool | None = None,
     page: int = 1,
     size: int = 20,
 ) -> tuple[list[Proveedor], int]:
-    base = select(Proveedor)
+    base = select(Proveedor).where(Proveedor.empresa_id == empresa_id)
     if q:
         base = base.where(
             func.lower(Proveedor.nombre_empresa).like(f"%{q.strip().lower()}%")
@@ -32,28 +33,35 @@ def list_proveedores(
     return items, total
 
 
-def opciones(session: Session) -> list[Proveedor]:
+def opciones(session: Session, *, empresa_id: int) -> list[Proveedor]:
     return session.exec(
         select(Proveedor)
-        .where(Proveedor.activo == True)  # noqa: E712
+        .where(
+            Proveedor.empresa_id == empresa_id,
+            Proveedor.activo == True,  # noqa: E712
+        )
         .order_by(Proveedor.nombre_empresa)
     ).all()
 
 
-def get_or_404(session: Session, proveedor_id: int) -> Proveedor:
+def get_or_404(
+    session: Session, proveedor_id: int, *, empresa_id: int
+) -> Proveedor:
     proveedor = session.get(Proveedor, proveedor_id)
-    if proveedor is None:
+    if proveedor is None or proveedor.empresa_id != empresa_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Proveedor no encontrado"
         )
     return proveedor
 
 
-def create_proveedor(session: Session, data: ProveedorCreate) -> Proveedor:
+def create_proveedor(
+    session: Session, data: ProveedorCreate, *, empresa_id: int
+) -> Proveedor:
     datos = data.model_dump()
     if datos.get("email") is not None:
         datos["email"] = str(datos["email"])
-    proveedor = Proveedor(**datos)
+    proveedor = Proveedor(empresa_id=empresa_id, **datos)
     session.add(proveedor)
     session.commit()
     session.refresh(proveedor)
@@ -61,9 +69,9 @@ def create_proveedor(session: Session, data: ProveedorCreate) -> Proveedor:
 
 
 def update_proveedor(
-    session: Session, proveedor_id: int, data: ProveedorUpdate
+    session: Session, proveedor_id: int, data: ProveedorUpdate, *, empresa_id: int
 ) -> Proveedor:
-    proveedor = get_or_404(session, proveedor_id)
+    proveedor = get_or_404(session, proveedor_id, empresa_id=empresa_id)
     cambios = data.model_dump(exclude_unset=True)
     if "email" in cambios and cambios["email"] is not None:
         cambios["email"] = str(cambios["email"])

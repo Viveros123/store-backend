@@ -20,6 +20,7 @@ class Promocion(SQLModel, table=True):
     __tablename__ = "promocion"
 
     id: int | None = Field(default=None, primary_key=True)
+    empresa_id: int = Field(foreign_key="empresa.id", index=True)
     nombre: str = Field(max_length=100)
     descripcion: str | None = Field(default=None, max_length=500)
     tipo_descuento: str = Field(max_length=20)

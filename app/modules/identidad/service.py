@@ -220,12 +220,15 @@ def _validar_sucursal(
         )
 
 
-def _validar_proveedor(session: Session, proveedor_id: int | None) -> None:
+def _validar_proveedor(
+    session: Session, proveedor_id: int | None, empresa_id: int
+) -> None:
     if proveedor_id is None:
         return
     from app.modules.proveedores.models import Proveedor
 
-    if session.get(Proveedor, proveedor_id) is None:
+    proveedor = session.get(Proveedor, proveedor_id)
+    if proveedor is None or proveedor.empresa_id != empresa_id:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"El proveedor {proveedor_id} no existe",
@@ -242,7 +245,7 @@ def create_usuario(
         )
     _validar_rol(session, data.rol_id)
     _validar_sucursal(session, data.sucursal_id, empresa_id)
-    _validar_proveedor(session, data.proveedor_id)
+    _validar_proveedor(session, data.proveedor_id, empresa_id)
     from app.modules.saas.models import CodigoLimite
     from app.modules.saas.service import validar_limite_disponible
 
@@ -303,7 +306,9 @@ def update_usuario(
             raise HTTPException(422, "El actor no tiene una empresa asociada")
         _validar_sucursal(session, cambios["sucursal_id"], empresa_id)
     if "proveedor_id" in cambios:
-        _validar_proveedor(session, cambios["proveedor_id"])
+        if empresa_id is None:
+            raise HTTPException(422, "El actor no tiene una empresa asociada")
+        _validar_proveedor(session, cambios["proveedor_id"], empresa_id)
     if "password" in cambios and cambios["password"]:
         usuario.password_hash = hash_password(cambios["password"])
 
