@@ -58,8 +58,8 @@ def _diferencias_estimadas(
         nueva_variante = session.get(ProductoVariante, s.variante_nueva_id)
         if nueva_variante is not None:
             producto_nuevo = session.get(Producto, nueva_variante.producto_id)
-            _, precio_unitario_nuevo, _ = ventas_service._precio_venta(
-                session, nueva_variante, producto_nuevo
+            _, precio_unitario_nuevo, _, _ = ventas_service._precio_venta(
+                session, nueva_variante, producto_nuevo, s.cantidad
             )
             diferencia_cambio = precio_unitario_nuevo * s.cantidad - precio_devuelto
     return diferencia_cambio, diferencia_devolucion
@@ -355,8 +355,8 @@ def resolver(
                 "No hay stock de esa talla/color en esta sucursal. "
                 "Podés convertir la solicitud en devolución.",
             )
-        _, precio_unitario_nuevo, _ = ventas_service._precio_venta(
-            session, nueva_variante, producto_nuevo
+        _, precio_unitario_nuevo, _, _ = ventas_service._precio_venta(
+            session, nueva_variante, producto_nuevo, s.cantidad
         )
         precio_nuevo = precio_unitario_nuevo * s.cantidad
         diferencia = precio_nuevo - precio_devuelto

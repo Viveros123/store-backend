@@ -51,6 +51,7 @@ from app.modules.productos.public_router import (  # noqa: E402
     router as catalogo_publico_router,
 )
 from app.modules.promociones.router import router as promociones_router  # noqa: E402
+from app.modules.mayoreo.router import router as mayoreo_router  # noqa: E402
 from app.modules.proveedores.router import router as proveedores_router  # noqa: E402
 from app.modules.reportes.router import router as reportes_router  # noqa: E402
 from app.modules.reservas.router import router as reservas_router  # noqa: E402
@@ -81,3 +82,4 @@ app.include_router(cambios_router)
 app.include_router(traspasos_router)
 app.include_router(notificacion_router)
 app.include_router(analitica_router)
+app.include_router(mayoreo_router)

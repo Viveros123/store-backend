@@ -159,6 +159,9 @@ class CatalogoVarianteOut(BaseModel):
     precio_efectivo: Decimal
     precio_promocional: Decimal | None = None
     promocion: str | None = None  # nombre de la promoción que aplica a esta variante
+    # CU53 — venta al por mayor: si hay regla vigente para esta variante.
+    mayoreo_cantidad_minima: int | None = None
+    mayoreo_porcentaje: Decimal | None = None
     imagen_efectivo: str | None = None
     # CU20 — vestidor virtual (None si la variante no tiene imagen AR)
     imagen_ar_url: str | None = None

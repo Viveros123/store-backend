@@ -8,11 +8,18 @@ from pydantic import BaseModel, Field
 
 class ItemCarritoCreate(BaseModel):
     variante_id: int
-    cantidad: int = Field(gt=0, le=20)
+    # Tope subido de 20 a 500: con ventas al por mayor (CU53) un cliente
+    # puede necesitar llevar bastantes más de 20 unidades de una variante.
+    cantidad: int = Field(gt=0, le=500)
 
 
 class ItemCarritoUpdate(BaseModel):
-    cantidad: int = Field(gt=0, le=20)
+    cantidad: int = Field(gt=0, le=500)
+
+
+class DescuentoMayoristaAplicadoOut(BaseModel):
+    cantidad_minima: int
+    porcentaje_descuento: Decimal
 
 
 class ItemCarritoOut(BaseModel):
@@ -24,9 +31,10 @@ class ItemCarritoOut(BaseModel):
     color: str | None
     sku: str | None
     imagen_efectivo: str | None
-    precio_unitario: Decimal | None  # ya con la promoción vigente (CU33)
+    precio_unitario: Decimal | None  # ya con la promoción/mayoreo vigente
     precio_original: Decimal | None = None
     promocion: str | None = None  # nombre de la promoción aplicada, si hay
+    descuento_mayorista: DescuentoMayoristaAplicadoOut | None = None  # CU53
     cantidad: int
     subtotal: Decimal | None
     disponible: bool  # si sigue existiendo stock de esta prenda en alguna sucursal

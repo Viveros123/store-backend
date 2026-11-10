@@ -480,7 +480,9 @@ def sincronizar_venta(
             return _rechazar(f"'{nombre}' ya no está disponible.")
         pedidos.append((variante, producto, item.cantidad))
 
-    precios = {v.id: ventas_service._precio_venta(session, v, p) for v, p, _ in pedidos}
+    precios = {
+        v.id: ventas_service._precio_venta(session, v, p, cant) for v, p, cant in pedidos
+    }
     total = sum((precios[v.id][1] * cantidad for v, _, cantidad in pedidos), Decimal(0))
 
     # 1) Se cobra PRIMERO con la tarjeta guardada — a propósito, no se valida
@@ -540,7 +542,7 @@ def sincronizar_venta(
     session.flush()  # necesitamos venta.id para el detalle
 
     for variante, cantidad, inv in asignacion:
-        original, precio, promocion_id = precios[variante.id]
+        original, precio, promocion_id, _ = precios[variante.id]
         session.add(
             VentaDetalle(
                 venta_id=venta.id,
@@ -662,7 +664,9 @@ def sincronizar_venta_efectivo(
             return _rechazar(f"'{nombre}' ya no está disponible.")
         pedidos.append((variante, producto, item.cantidad))
 
-    precios = {v.id: ventas_service._precio_venta(session, v, p) for v, p, _ in pedidos}
+    precios = {
+        v.id: ventas_service._precio_venta(session, v, p, cant) for v, p, cant in pedidos
+    }
     total = sum((precios[v.id][1] * cantidad for v, _, cantidad in pedidos), Decimal(0))
 
     if data.monto_recibido < total:
@@ -702,7 +706,7 @@ def sincronizar_venta_efectivo(
     # única forma de saber qué prenda(s) hay que recuperar cuando el cliente
     # vuelva a devolverlas (CU16/CU21).
     for variante, _, cantidad in pedidos:
-        original, precio, promocion_id = precios[variante.id]
+        original, precio, promocion_id, _ = precios[variante.id]
         inv = inventarios[variante.id]
         session.add(
             VentaDetalle(

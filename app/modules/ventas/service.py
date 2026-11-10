@@ -13,6 +13,7 @@ from app.modules.identidad import service as identidad_service
 from app.modules.identidad.models import Rol, RolNombre, Usuario
 from app.modules.identidad.schemas import ClienteRegistroIn
 from app.modules.inventario.models import Inventario, MovimientoInventario, TipoMovimiento
+from app.modules.mayoreo import service as mayoreo_service
 from app.modules.productos.models import Producto, ProductoVariante
 from app.modules.promociones import service as promociones_service
 from app.modules.promociones.models import Promocion
@@ -63,16 +64,27 @@ def _hay_stock(session: Session, variante_id: int) -> bool:
 
 
 def _precio_venta(
-    session: Session, variante: ProductoVariante, producto: Producto
-) -> tuple[Decimal, Decimal, int | None]:
-    """(precio original, precio final con la mejor promoción vigente, id de
-    la promoción aplicada o None) — CU33."""
+    session: Session, variante: ProductoVariante, producto: Producto, cantidad: int = 1
+) -> tuple[Decimal, Decimal, int | None, dict | None]:
+    """(precio original, precio final, id de la promoción aplicada o None,
+    info de mayoreo aplicado o None). Compara la mejor promoción vigente
+    (CU49) contra el descuento por mayoreo (CU53, según `cantidad`) y se
+    queda con lo que le cueste menos al cliente."""
     original = variante.precio if variante.precio is not None else producto.precio_base
-    final, promo = promociones_service.mejor_precio(
+    final_promo, promo = promociones_service.mejor_precio(
         original,
         promociones_service.promos_de_variante(session, variante.id, producto.id),
     )
-    return original, final, promo.id if promo else None
+    regla_mayoreo = mayoreo_service.regla_vigente_de_variante(session, variante.id)
+    precio_mayoreo = mayoreo_service.precio_con_mayoreo(regla_mayoreo, original, cantidad)
+
+    if precio_mayoreo is not None and precio_mayoreo < final_promo:
+        mayoreo_info = {
+            "cantidad_minima": regla_mayoreo.cantidad_minima,
+            "porcentaje_descuento": regla_mayoreo.porcentaje_descuento,
+        }
+        return original, precio_mayoreo, None, mayoreo_info
+    return original, final_promo, promo.id if promo else None, None
 
 
 def _item_out(session: Session, d: CarritoDetalle) -> dict:
@@ -84,8 +96,11 @@ def _item_out(session: Session, d: CarritoDetalle) -> dict:
     precio = None
     precio_original = None
     promocion = None
+    mayoreo = None
     if variante is not None and producto is not None and producto.precio_base is not None:
-        precio_original, precio, promocion_id = _precio_venta(session, variante, producto)
+        precio_original, precio, promocion_id, mayoreo = _precio_venta(
+            session, variante, producto, d.cantidad
+        )
         if promocion_id is not None:
             promocion = session.get(Promocion, promocion_id).nombre
     subtotal = precio * d.cantidad if precio is not None else None
@@ -103,6 +118,7 @@ def _item_out(session: Session, d: CarritoDetalle) -> dict:
         "precio_unitario": precio,
         "precio_original": precio_original,
         "promocion": promocion,
+        "descuento_mayorista": mayoreo,
         "cantidad": d.cantidad,
         "subtotal": subtotal,
         "disponible": _hay_stock(session, d.variante_id) if variante else False,
@@ -366,10 +382,14 @@ def crear_checkout(session: Session, cliente_id: int, data: CheckoutCreate) -> d
             )
         pedidos.append((variante, producto, d.cantidad))
 
-    precios = {v.id: _precio_venta(session, v, p) for v, p, _ in pedidos}
+    # Ojo: la cantidad usada acá es la cantidad TOTAL del carrito para esa
+    # variante (antes de que `_asignar_despacho` la reparta entre sucursales),
+    # porque el umbral de mayoreo se evalúa sobre lo que pidió el cliente, no
+    # sobre cuánto salió de cada sucursal.
+    precios = {v.id: _precio_venta(session, v, p, cant) for v, p, cant in pedidos}
     lineas = []
     for variante, cantidad, inv in _asignar_despacho(session, pedidos):
-        original, precio, promocion_id = precios[variante.id]
+        original, precio, promocion_id, _ = precios[variante.id]
         lineas.append((variante, cantidad, precio, inv, original, promocion_id))
 
     total = sum(precio * cantidad for _, cantidad, precio, *_ in lineas)
@@ -713,7 +733,9 @@ def _resolver_lineas_presencial(
             raise HTTPException(
                 422, f"No hay stock suficiente de '{producto.nombre}' en tu sucursal."
             )
-        original, precio, promocion_id = _precio_venta(session, variante, producto)
+        original, precio, promocion_id, _ = _precio_venta(
+            session, variante, producto, item.cantidad
+        )
         lineas.append((variante, item.cantidad, precio, inv, original, promocion_id))
     return lineas
 

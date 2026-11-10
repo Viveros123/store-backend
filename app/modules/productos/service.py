@@ -14,6 +14,7 @@ from app.modules.catalogo.models import (
     Temporada,
 )
 from app.modules.inventario.models import Inventario, MovimientoInventario
+from app.modules.mayoreo import service as mayoreo_service
 from app.modules.productos.models import Producto, ProductoVariante
 from app.modules.promociones import service as promociones_service
 from app.modules.proveedores.models import Proveedor
@@ -736,6 +737,9 @@ def get_catalogo_detalle(
     promos_por_variante = promociones_service.promos_vigentes_por_variante(
         session, [(v.id, producto_id) for v in variantes]
     )
+    mayoreo_por_variante = mayoreo_service.reglas_vigentes_de_variantes(
+        session, [v.id for v in variantes]
+    )
     resultado_variantes = []
     for v in variantes:
         talla = session.get(Talla, v.talla_id)
@@ -744,6 +748,7 @@ def get_catalogo_detalle(
         precio_final, promo = promociones_service.mejor_precio(
             precio_efectivo, promos_por_variante.get(v.id, [])
         )
+        regla_mayoreo = mayoreo_por_variante.get(v.id)
         resultado_variantes.append(
             {
                 "id": v.id,
@@ -755,6 +760,12 @@ def get_catalogo_detalle(
                 "precio_efectivo": precio_efectivo,
                 "precio_promocional": precio_final if promo else None,
                 "promocion": promo.nombre if promo else None,
+                "mayoreo_cantidad_minima": regla_mayoreo.cantidad_minima
+                if regla_mayoreo
+                else None,
+                "mayoreo_porcentaje": regla_mayoreo.porcentaje_descuento
+                if regla_mayoreo
+                else None,
                 "imagen_efectivo": v.imagen_url or p.imagen_url,
                 "imagen_ar_url": v.imagen_ar_url,
                 "ancla_izq_x": v.ancla_izq_x,

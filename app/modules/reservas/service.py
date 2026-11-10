@@ -491,7 +491,7 @@ def finalizar_reserva(
     # puede ser la reservada original, o la sustituta elegida (CU17).
     variantes_venta: dict[int, ProductoVariante] = {}
     inventarios_venta: dict[int, Inventario] = {}
-    precios: dict[int, tuple[Decimal, Decimal, int | None]] = {}
+    precios: dict[int, tuple[Decimal, Decimal, int | None, dict | None]] = {}
     es_sustitucion: dict[int, bool] = {}
 
     for d in detalles:
@@ -552,7 +552,9 @@ def finalizar_reserva(
 
         variantes_venta[d.id] = variante_venta
         inventarios_venta[d.id] = inv_venta
-        precios[d.id] = ventas_service._precio_venta(session, variante_venta, producto_venta)
+        precios[d.id] = ventas_service._precio_venta(
+            session, variante_venta, producto_venta, item.cantidad_llevada
+        )
 
     llevadas = {did: items_por_id[did].cantidad_llevada for did in por_id}
     unidades_llevadas = sum(llevadas.values())
@@ -602,7 +604,7 @@ def finalizar_reserva(
         if llevada > 0 and venta is not None:
             variante_venta = variantes_venta[d.id]
             inv_venta = inventarios_venta[d.id]
-            original, precio, promocion_id = precios[d.id]
+            original, precio, promocion_id, _ = precios[d.id]
             session.add(
                 VentaDetalle(
                     venta_id=venta.id,
